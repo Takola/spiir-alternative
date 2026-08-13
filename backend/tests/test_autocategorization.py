@@ -117,7 +117,7 @@ def test_investment_rule_does_not_replace_manual_category() -> None:
 
 
 def test_saxo_dot_com_bookstore_is_not_classified_as_investment() -> None:
-    bookstore = row("saxo-bookstore", "MobilePay kÃ¸b MobilePay Saxo.com", -1304.80, "wife")
+    bookstore = row("saxo-bookstore", "MobilePay køb MobilePay Saxo.com", -1304.80, "wife")
 
     result = _autocategorize_rows([bookstore], "now")
 
