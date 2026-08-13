@@ -77,10 +77,6 @@ const SPIIR_SUBCATEGORY_ORDER: Record<string, string[]> = {
     Indkomst: ["Løn", "Pensionsudbetaling", "Dagpenge/overførselsindkomst", "SU & studielån", "Børnepenge", "Underholds- & børnebidrag", "Feriepenge", "Renteindtægter", "Udbytte & afkast", "Overskydende skat", "Boligstøtte", "Anden indkomst"],
     "Vis ikke": ["Kontooverførsel", "Udlæg", "Ignorer"],
 };
-const SPIIR_MAIN_CATEGORY_TYPES: Record<string, string> = {
-    Indkomst: "Income",
-    "Pension & Opsparing": "Investment",
-};
 const SPIIR_FIXED_CATEGORY_NAMES = new Set([
     "Boliglån/husleje", "El, vand, varme & renovation", "Ejerforening", "Ejendomsskat", "Husforsikring", "Indbo- & familieforsikring", "Alarmsystem", "Udgifter fritidshus",
     "Bil-, MC-, bådlån o.l.", "Bilforsikring & autohjælp", "Ejerafgift/grøn afgift",
@@ -418,36 +414,6 @@ function categoryKey(category: Pick<NordeaCategoryOption, "mainCategoryId" | "ca
         return "";
     }
     return `${String(category.mainCategoryId ?? "")}|${String(category.categoryId)}`;
-}
-
-function defaultSpiirCategories(categories: NordeaCategoryOption[]): NordeaCategoryOption[] {
-    const existingByName = new Map(
-        categories.map((category) => [`${category.mainCategoryName}|${category.categoryName}`, category])
-    );
-    const defaults = Object.entries(SPIIR_SUBCATEGORY_ORDER).flatMap(([mainCategoryName, categoryNames]) =>
-        categoryNames.map((categoryName) => {
-            const existing = existingByName.get(`${mainCategoryName}|${categoryName}`);
-            if (existing) {
-                return existing;
-            }
-            const identifier = `${mainCategoryName}-${categoryName}`
-                .toLowerCase()
-                .normalize("NFD")
-                .replace(/[\u0300-\u036f]/g, "")
-                .replace(/[^a-z0-9]+/g, "-")
-                .replace(/(^-|-$)/g, "");
-            return {
-                categoryType: SPIIR_MAIN_CATEGORY_TYPES[mainCategoryName] ?? "Expense",
-                mainCategoryId: `built-in-main:${identifier.split("-")[0]}`,
-                mainCategoryName,
-                categoryId: `built-in:${identifier}`,
-                categoryName,
-                usage_count: 0,
-            };
-        })
-    );
-    const defaultNames = new Set(defaults.map((category) => `${category.mainCategoryName}|${category.categoryName}`));
-    return [...defaults, ...categories.filter((category) => !defaultNames.has(`${category.mainCategoryName}|${category.categoryName}`))];
 }
 
 function buildMainCategoryOption(mainCategoryId: string | number | null | undefined, mainCategoryName: string, categoryType = "Expense", usageCount = 0): NordeaCategoryOption {
@@ -1939,7 +1905,7 @@ export default function NordeaDashboard({
     const isLocalLedgerSource = source === "local-ledger";
     const [data, setData] = useState<NordeaTransactionsResponse | null>(null);
     const [taxonomy, setTaxonomy] = useState<NordeaTaxonomyResponse>({ categories: [], hashtags: [] });
-    const availableCategories = useMemo(() => defaultSpiirCategories(taxonomy.categories), [taxonomy.categories]);
+    const availableCategories = taxonomy.categories;
     const [loading, setLoading] = useState(false);
     const [retrieving, setRetrieving] = useState(false);
     const [retrieveChecking, setRetrieveChecking] = useState(false);

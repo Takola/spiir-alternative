@@ -31,26 +31,16 @@ from .spiir_service import (
     _remove_hashtags_from_comment,
 )
 from .storage import create_backup
+from .taxonomy import built_in_categories
 
 API_BASE = "https://api.enablebanking.com"
 ALIAS_RE = re.compile(r"[0-9A-Za-z_æøåÆØÅ-]{3,}")
-NORDEA_TAXONOMY_CACHE_VERSION = 2
+NORDEA_TAXONOMY_CACHE_VERSION = 3
 NORDEA_INCREMENTAL_LOOKBACK_DAYS = 7
 INCOME_DESCRIPTION_RE = re.compile(
     r"\b(l[oø]n(?:overf[oø]rsel)?|b[oø]rne-?\s*og\s*ungeydelse|dagpenge|feriepenge|pensionsudbetaling)\b",
     re.I,
 )
-DEFAULT_TAXONOMY_CATEGORIES = [
-    {
-        "categoryType": "Income",
-        "mainCategoryId": "synthetic-income",
-        "mainCategoryName": "Indkomst",
-        "categoryId": "synthetic-income-gifts",
-        "categoryName": "Pengegaver",
-        "usage_count": 0,
-    },
-]
-
 _NORDEA_TAXONOMY_CACHE: dict[str, Any] = {
     "key": None,
     "payload": None,
@@ -810,9 +800,16 @@ def _build_taxonomy_payload(entries: list[dict[str, Any]]) -> dict[str, Any]:
         "categoryName": UNCATEGORIZED_CATEGORY_NAME,
         "usage_count": 0,
     })
-    for category in DEFAULT_TAXONOMY_CATEGORIES:
+    categories_by_name = {
+        (str(category["mainCategoryName"]), str(category["categoryName"])): category
+        for category in categories.values()
+    }
+    for category in built_in_categories():
+        name_key = (str(category["mainCategoryName"]), str(category["categoryName"]))
+        if name_key in categories_by_name:
+            continue
         category_key = (str(category["mainCategoryId"]), str(category["categoryId"]))
-        categories.setdefault(category_key, dict(category))
+        categories[category_key] = dict(category)
 
     for key, category in categories.items():
         alias_counts = category_alias_counts.get(key, {})
