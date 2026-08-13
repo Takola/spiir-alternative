@@ -212,12 +212,34 @@ def _sort_local_ledger_rows_desc(rows: list[dict[str, Any]]) -> list[dict[str, A
 
 
 def _build_local_ledger_transactions_meta(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    account_names = sorted({str(item.get("source_account_name") or "").strip() for item in rows if str(item.get("source_account_name") or "").strip()})
+    nordea_payload = load_nordea_transactions()
+    accounts_by_id: dict[str, dict[str, Any]] = {}
+    account_lookup: dict[str, dict[str, str]] = {}
+    for account in nordea_payload.get("accounts") or []:
+        if not isinstance(account, dict):
+            continue
+        account_id = str((account.get("account_id") or {}).get("iban") or "").strip()
+        if account_id:
+            accounts_by_id[account_id] = account
+    for transaction in nordea_payload.get("transactions") or []:
+        if not isinstance(transaction, dict):
+            continue
+        source_id = str(transaction.get("id") or "").strip()
+        account_id = str(transaction.get("account_iban") or "").strip()
+        if source_id and account_id:
+            account_lookup[source_id] = {"id": account_id, "name": str(transaction.get("account_name") or "").strip()}
+    for row in rows:
+        account_id = str(row.get("source_account_id") or "").strip()
+        account_name = str(row.get("source_account_name") or "").strip()
+        if account_id and account_id not in accounts_by_id:
+            accounts_by_id[account_id] = {"account_id": {"iban": account_id}, "name": account_name}
     return {
-        **_nordea_retrieve_meta(),
+        "last_retrieved_at": nordea_payload.get("last_retrieved_at"),
+        "last_retrieve_duration_seconds": nordea_payload.get("last_retrieve_duration_seconds"),
         "transaction_count": len(rows),
         "pending_review_count": sum(1 for item in rows if bool(item.get("pending_review"))),
-        "accounts": [{"name": name} for name in account_names],
+        "accounts": list(accounts_by_id.values()),
+        "account_lookup": account_lookup,
     }
 
 
@@ -244,10 +266,11 @@ def _build_local_ledger_transactions_response(
     offset: int,
 ) -> dict[str, Any]:
     sliced_rows = _slice_local_ledger_rows(rows, limit=limit, offset=offset)
-    transactions = [normalized for row in sliced_rows if (normalized := _normalize_local_ledger_transaction_row(row)) is not None]
+    account_lookup = meta.get("account_lookup") if isinstance(meta.get("account_lookup"), dict) else {}
+    transactions = [normalized for row in sliced_rows if (normalized := _normalize_local_ledger_transaction_row(row, account_lookup)) is not None]
     return {
         "generated_at": _iso_utc_now(),
-        **meta,
+        **{key: value for key, value in meta.items() if key != "account_lookup"},
         "loaded_count": len(transactions),
         "offset": max(offset, 0),
         "limit": limit,
@@ -852,7 +875,7 @@ def _sorted_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(rows, key=lambda item: (str(item.get("date") or ""), str(item.get("id") or "")))
 
 
-def _normalize_local_ledger_transaction_row(row: dict[str, Any]) -> dict[str, Any] | None:
+def _normalize_local_ledger_transaction_row(row: dict[str, Any], account_lookup: dict[str, dict[str, str]] | None = None) -> dict[str, Any] | None:
     if str(row.get("source") or "") not in {"spiir", "nordea"}:
         return None
     splits = []
@@ -874,6 +897,9 @@ def _normalize_local_ledger_transaction_row(row: dict[str, Any]) -> dict[str, An
             }
         )
 
+    matched_account = (account_lookup or {}).get(str(row.get("source_id") or ""), {})
+    account_id = str(row.get("source_account_id") or matched_account.get("id") or "").strip()
+    account_name = str(row.get("source_account_name") or matched_account.get("name") or "").strip()
     return {
         "id": str(row.get("id") or ""),
         "entry_reference": str(row.get("source_id") or row.get("id") or ""),
@@ -886,8 +912,8 @@ def _normalize_local_ledger_transaction_row(row: dict[str, Any]) -> dict[str, An
         "creditor_name": str(row.get("counterparty") or ""),
         "debtor_name": "",
         "bank_transaction_code": None,
-        "account_iban": None,
-        "account_name": str(row.get("source_account_name") or ""),
+        "account_iban": account_id or None,
+        "account_name": account_name,
         "categoryType": str(row.get("category_type") or "Expense"),
         "mainCategoryId": row.get("main_category_id") or UNCATEGORIZED_MAIN_CATEGORY_ID,
         "mainCategoryName": row.get("main_category_name") or UNCATEGORIZED_MAIN_CATEGORY_NAME,

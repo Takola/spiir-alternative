@@ -32,15 +32,24 @@ from .spiir_service import (
 )
 from .storage import create_backup
 
-APP_ID = os.getenv("ENABLEBANKING_APP_ID", "").strip()
 API_BASE = "https://api.enablebanking.com"
 ALIAS_RE = re.compile(r"[0-9A-Za-z_æøåÆØÅ-]{3,}")
-NORDEA_TAXONOMY_CACHE_VERSION = 1
+NORDEA_TAXONOMY_CACHE_VERSION = 2
 NORDEA_INCREMENTAL_LOOKBACK_DAYS = 7
 INCOME_DESCRIPTION_RE = re.compile(
     r"\b(l[oø]n(?:overf[oø]rsel)?|b[oø]rne-?\s*og\s*ungeydelse|dagpenge|feriepenge|pensionsudbetaling)\b",
     re.I,
 )
+DEFAULT_TAXONOMY_CATEGORIES = [
+    {
+        "categoryType": "Income",
+        "mainCategoryId": "synthetic-income",
+        "mainCategoryName": "Indkomst",
+        "categoryId": "synthetic-income-gifts",
+        "categoryName": "Pengegaver",
+        "usage_count": 0,
+    },
+]
 
 _NORDEA_TAXONOMY_CACHE: dict[str, Any] = {
     "key": None,
@@ -136,9 +145,27 @@ def _key_path() -> Path:
 
 
 def _enablebanking_app_id() -> str:
-    if not APP_ID:
-        raise RuntimeError("Set ENABLEBANKING_APP_ID before calling Enable Banking")
-    return APP_ID
+    configured_app_id = os.getenv("ENABLEBANKING_APP_ID", "").strip()
+    if configured_app_id:
+        return configured_app_id
+
+    configured_key_path = os.getenv("ENABLEBANKING_PRIVATE_KEY_PATH", "").strip()
+    if configured_key_path:
+        key_path = Path(configured_key_path).expanduser()
+        if key_path.suffix.lower() == ".pem" and key_path.stem:
+            return key_path.stem
+
+    key_dir = get_data_dir() / "local_secrets" / "enablebanking"
+    key_files = sorted(key_dir.glob("*.pem")) if key_dir.exists() else []
+    if len(key_files) == 1:
+        return key_files[0].stem
+    if len(key_files) > 1:
+        raise RuntimeError(
+            "Multiple Enable Banking private keys found; set ENABLEBANKING_APP_ID to choose one"
+        )
+    raise RuntimeError(
+        f"Missing Enable Banking configuration: place the app private key in {key_dir} or set ENABLEBANKING_APP_ID"
+    )
 
 
 def _read_json(path: Path) -> Any:
@@ -309,6 +336,30 @@ def _signed_amount(transaction: dict[str, Any]) -> float:
     if transaction.get("credit_debit_indicator") == "DBIT":
         return -amount
     return amount
+
+
+def _current_booked_balance(payload: dict[str, Any]) -> dict[str, Any] | None:
+    balances = payload.get("balances")
+    if not isinstance(balances, list):
+        return None
+    candidates = [item for item in balances if isinstance(item, dict)]
+    if not candidates:
+        return None
+    balance = next(
+        (item for item in candidates if str(item.get("name") or "").lower() == "booked balance"),
+        candidates[0],
+    )
+    amount = balance.get("balance_amount") or {}
+    if not isinstance(amount, dict) or amount.get("amount") is None:
+        return None
+    value = float(amount["amount"])
+    if str(balance.get("credit_debit_indicator") or "").upper() == "DBIT":
+        value = -value
+    return {
+        "amount": value,
+        "currency": amount.get("currency") or "DKK",
+        "updated_at": balance.get("last_change_date_time") or balance.get("reference_date"),
+    }
 
 
 def _join_lines(value: Any) -> str:
@@ -565,6 +616,39 @@ def load_nordea_transactions() -> dict[str, Any]:
     return _apply_overrides(_load_processed())
 
 
+def refresh_nordea_account_balances() -> dict[str, int | str | None]:
+    """Refresh stored account balances without retrieving or changing transactions."""
+    accounts, _ = _load_enablebanking_accounts()
+    processed = _load_processed()
+    processed_accounts = {
+        str(account.get("uid") or ""): account
+        for account in processed.get("accounts") or []
+        if isinstance(account, dict)
+    }
+    updated_count = 0
+    failed_count = 0
+    last_error: str | None = None
+    for account in accounts:
+        account_uid = str(account.get("uid") or "")
+        target = processed_accounts.get(account_uid)
+        if not account_uid or target is None:
+            continue
+        try:
+            balance = _current_booked_balance(_request_json("GET", f"/accounts/{account_uid}/balances"))
+            if balance is not None:
+                target["balance"] = balance
+                updated_count += 1
+            else:
+                failed_count += 1
+        except Exception as exc:
+            failed_count += 1
+            last_error = str(exc)
+    if updated_count:
+        create_backup(_processed_file())
+        _write_json(_processed_file(), processed)
+    return {"updated_count": updated_count, "failed_count": failed_count, "error": last_error}
+
+
 def _local_ledger_taxonomy_entries() -> list[dict[str, Any]]:
     transactions_path = get_spiir_local_transactions_file()
     overrides_path = get_spiir_local_overrides_file()
@@ -726,6 +810,9 @@ def _build_taxonomy_payload(entries: list[dict[str, Any]]) -> dict[str, Any]:
         "categoryName": UNCATEGORIZED_CATEGORY_NAME,
         "usage_count": 0,
     })
+    for category in DEFAULT_TAXONOMY_CATEGORIES:
+        category_key = (str(category["mainCategoryId"]), str(category["categoryId"]))
+        categories.setdefault(category_key, dict(category))
 
     for key, category in categories.items():
         alias_counts = category_alias_counts.get(key, {})
@@ -857,6 +944,15 @@ def retrieve_nordea_transactions(
     all_transactions = 0
     for account_index, account in enumerate(accounts, start=1):
         account_uid = account["uid"]
+        account_with_balance = dict(account)
+        try:
+            balance_payload = _request_json("GET", f"/accounts/{account_uid}/balances")
+            balance = _current_booked_balance(balance_payload)
+            if balance is not None:
+                account_with_balance["balance"] = balance
+        except Exception:
+            # A missing balance must not prevent transaction retrieval for the account.
+            pass
         transactions: list[dict[str, Any]] = []
         continuation_key = None
         page_number = 0
@@ -879,7 +975,7 @@ def retrieve_nordea_transactions(
         raw_payload = {
             "fetched_at": _iso_utc_now(),
             "session_id": account.get("_enablebanking_session_id"),
-            "account": {key: value for key, value in account.items() if key != "_enablebanking_session_id"},
+            "account": {key: value for key, value in account_with_balance.items() if key != "_enablebanking_session_id"},
             "params": params,
             "transaction_count": len(transactions),
             "transactions": transactions,

@@ -65,13 +65,41 @@
         color: var(--ink);
     }
 
-    .account-filter-panel {
-        margin: 0 0 1rem;
-        padding: 1.15rem 1.25rem;
+.account-filter-panel {
+        margin: 0 0 0.65rem;
+        padding: 0.35rem 0.65rem;
         border: 1px solid var(--line);
         border-radius: 24px;
         background: linear-gradient(135deg, var(--panel), color-mix(in srgb, var(--panel-strong) 82%, transparent));
         box-shadow: 0 14px 36px rgba(11, 36, 31, 0.1);
+    }
+
+    .account-filter-toggle {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        width: 100%;
+        padding: 0.25rem 0.15rem;
+        border: 0;
+        background: transparent;
+        color: var(--ink);
+        font: inherit;
+        text-align: left;
+    }
+
+    .account-filter-toggle > span:first-child {
+        font-weight: 800;
+    }
+
+    .account-filter-toggle small {
+        color: var(--muted);
+        font-size: 0.78rem;
+    }
+
+    .account-filter-toggle > span:last-child {
+        margin-left: auto;
+        color: var(--muted);
+        font-size: 0.68rem;
     }
 
     .account-filter-heading,
@@ -96,7 +124,7 @@
 
     .account-filter-actions {
         align-items: flex-start;
-        margin-top: 1rem;
+        margin-top: 0.5rem;
     }
 
     .account-select-all {
@@ -3431,6 +3459,10 @@ html[data-density="compact"] .spiir-expand-toggle {
     margin-left: 0.35rem;
     color: rgb(153, 153, 153);
     font: inherit;
+}
+
+.nordea-category-options button.unused:not(.active) {
+    color: rgb(153, 153, 153);
 }
 
 .nordea-category-arrow {

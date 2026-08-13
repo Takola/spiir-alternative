@@ -28,6 +28,7 @@ from .nordea_service import (
     get_nordea_retrieve_status,
     load_nordea_taxonomy,
     load_nordea_transactions,
+    refresh_nordea_account_balances,
     retrieve_nordea_transactions,
     save_nordea_overrides,
     start_nordea_retrieve_job,
@@ -184,6 +185,10 @@ def create_app() -> FastAPI:
     @app.get("/api/nordea/transactions")
     def nordea_transactions() -> dict[str, object]:
         return load_nordea_transactions()
+
+    @app.post("/api/nordea/refresh-balances")
+    def nordea_refresh_balances() -> dict[str, int | str | None]:
+        return refresh_nordea_account_balances()
 
     @app.get("/api/nordea/taxonomy")
     def nordea_taxonomy() -> dict[str, object]:

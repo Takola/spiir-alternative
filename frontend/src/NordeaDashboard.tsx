@@ -77,6 +77,10 @@ const SPIIR_SUBCATEGORY_ORDER: Record<string, string[]> = {
     Indkomst: ["Løn", "Pensionsudbetaling", "Dagpenge/overførselsindkomst", "SU & studielån", "Børnepenge", "Underholds- & børnebidrag", "Feriepenge", "Renteindtægter", "Udbytte & afkast", "Overskydende skat", "Boligstøtte", "Anden indkomst"],
     "Vis ikke": ["Kontooverførsel", "Udlæg", "Ignorer"],
 };
+const SPIIR_MAIN_CATEGORY_TYPES: Record<string, string> = {
+    Indkomst: "Income",
+    "Pension & Opsparing": "Investment",
+};
 const SPIIR_FIXED_CATEGORY_NAMES = new Set([
     "Boliglån/husleje", "El, vand, varme & renovation", "Ejerforening", "Ejendomsskat", "Husforsikring", "Indbo- & familieforsikring", "Alarmsystem", "Udgifter fritidshus",
     "Bil-, MC-, bådlån o.l.", "Bilforsikring & autohjælp", "Ejerafgift/grøn afgift",
@@ -414,6 +418,36 @@ function categoryKey(category: Pick<NordeaCategoryOption, "mainCategoryId" | "ca
         return "";
     }
     return `${String(category.mainCategoryId ?? "")}|${String(category.categoryId)}`;
+}
+
+function defaultSpiirCategories(categories: NordeaCategoryOption[]): NordeaCategoryOption[] {
+    const existingByName = new Map(
+        categories.map((category) => [`${category.mainCategoryName}|${category.categoryName}`, category])
+    );
+    const defaults = Object.entries(SPIIR_SUBCATEGORY_ORDER).flatMap(([mainCategoryName, categoryNames]) =>
+        categoryNames.map((categoryName) => {
+            const existing = existingByName.get(`${mainCategoryName}|${categoryName}`);
+            if (existing) {
+                return existing;
+            }
+            const identifier = `${mainCategoryName}-${categoryName}`
+                .toLowerCase()
+                .normalize("NFD")
+                .replace(/[\u0300-\u036f]/g, "")
+                .replace(/[^a-z0-9]+/g, "-")
+                .replace(/(^-|-$)/g, "");
+            return {
+                categoryType: SPIIR_MAIN_CATEGORY_TYPES[mainCategoryName] ?? "Expense",
+                mainCategoryId: `built-in-main:${identifier.split("-")[0]}`,
+                mainCategoryName,
+                categoryId: `built-in:${identifier}`,
+                categoryName,
+                usage_count: 0,
+            };
+        })
+    );
+    const defaultNames = new Set(defaults.map((category) => `${category.mainCategoryName}|${category.categoryName}`));
+    return [...defaults, ...categories.filter((category) => !defaultNames.has(`${category.mainCategoryName}|${category.categoryName}`))];
 }
 
 function buildMainCategoryOption(mainCategoryId: string | number | null | undefined, mainCategoryName: string, categoryType = "Expense", usageCount = 0): NordeaCategoryOption {
@@ -1074,7 +1108,7 @@ function CategorySelect({
                         <button
                             type="button"
                             key={`${categoryKey(result.category)}|${result.alias}`}
-                            className={searchResults[highlightedIndex] === result && keyboardScope === "search" ? "active" : ""}
+                            className={`${searchResults[highlightedIndex] === result && keyboardScope === "search" ? "active" : ""}${result.category.usage_count === 0 ? " unused" : ""}`}
                             onMouseDown={(event) => event.preventDefault()}
                             onMouseEnter={() => {
                                 setKeyboardScope("search");
@@ -1101,7 +1135,7 @@ function CategorySelect({
                                         mainButtonRefs.current.delete(group.mainName);
                                     }
                                 }}
-                                className={group.mainName === activeGroup?.mainName ? "active" : ""}
+                                className={`${group.mainName === activeGroup?.mainName ? "active" : ""}${group.usageCount === 0 ? " unused" : ""}`}
                                 onMouseDown={(event) => event.preventDefault()}
                                 onMouseEnter={() => {
                                     setKeyboardScope("main");
@@ -1140,7 +1174,7 @@ function CategorySelect({
                             <button
                                 type="button"
                                 key={categoryKey(category)}
-                                className={activeGroup.categories[highlightedSubIndex] === category && keyboardScope === "sub" ? "active" : ""}
+                                className={`${activeGroup.categories[highlightedSubIndex] === category && keyboardScope === "sub" ? "active" : ""}${category.usage_count === 0 ? " unused" : ""}`}
                                 onMouseDown={(event) => event.preventDefault()}
                                 onMouseEnter={() => {
                                     setKeyboardScope("sub");
@@ -1878,8 +1912,15 @@ function accountRole(account: NordeaAccount): { label: string; tone: string } {
 }
 
 function accountDisplayName(account: NordeaAccount): string {
-    const iban = accountIban(account);
-    return iban === "unknown" ? "Unknown account" : `•••• ${iban.slice(-4)}`;
+    const amount = Number(account.balance?.amount);
+    if (!Number.isFinite(amount)) {
+        return "Saldo ikke hentet";
+    }
+    return new Intl.NumberFormat("da-DK", {
+        style: "currency",
+        currency: account.balance?.currency || account.currency || "DKK",
+        maximumFractionDigits: 0,
+    }).format(amount);
 }
 
 export default function NordeaDashboard({
@@ -1898,6 +1939,7 @@ export default function NordeaDashboard({
     const isLocalLedgerSource = source === "local-ledger";
     const [data, setData] = useState<NordeaTransactionsResponse | null>(null);
     const [taxonomy, setTaxonomy] = useState<NordeaTaxonomyResponse>({ categories: [], hashtags: [] });
+    const availableCategories = useMemo(() => defaultSpiirCategories(taxonomy.categories), [taxonomy.categories]);
     const [loading, setLoading] = useState(false);
     const [retrieving, setRetrieving] = useState(false);
     const [retrieveChecking, setRetrieveChecking] = useState(false);
@@ -1920,6 +1962,7 @@ export default function NordeaDashboard({
     const [visibilityFilter, setVisibilityFilter] = useState<VisibilityFilter>(initialFilter?.visibilityFilter ?? "all");
     const [categoryFilter, setCategoryFilter] = useState<NordeaCategoryOption | null>(initialFilter?.categoryFilter ?? null);
     const [selectedAccountIbans, setSelectedAccountIbans] = useState<string[]>([]);
+    const [accountFilterOpen, setAccountFilterOpen] = useState(false);
     const [showTransfersAlways, setShowTransfersAlways] = useState(true);
     const [visibilityPanelOpen, setVisibilityPanelOpen] = useState(false);
     const [searchText, setSearchText] = useState(initialFilter?.searchText ?? "");
@@ -2429,7 +2472,7 @@ export default function NordeaDashboard({
     }, [transactions]);
     const categoryFilterOptions = useMemo(() => {
         const byMain = new Map<string, { mainName: string; categories: NordeaCategoryOption[] }>();
-        taxonomy.categories.forEach((category) => {
+        availableCategories.forEach((category) => {
             const mainId = categoryMainId(category);
             const current = byMain.get(mainId) ?? {
                 mainName: spiirMenuMainName(category),
@@ -2460,7 +2503,7 @@ export default function NordeaDashboard({
                 }
                 return compareText(left.mainName, right.mainName);
             });
-    }, [taxonomy.categories]);
+    }, [availableCategories]);
     const filteredTransactions = useMemo(() => {
         const activeFilters = { periodFilter, periodStart: customPeriodStart, periodEnd: customPeriodEnd, visibilityFilter, categoryFilter, searchText, showTransfersAlways, outflowsOnly: initialFilter?.outflowsOnly };
         if (embedded && pinnedDrilldownRowIds) {
@@ -2499,7 +2542,7 @@ export default function NordeaDashboard({
     }, [filteredTransactions, visibilityFilter]);
     useEffect(() => {
         setPage(1);
-    }, [periodFilter, searchText, visibilityFilter, categoryFilter]);
+    }, [periodFilter, searchText, visibilityFilter, categoryFilter, selectedAccountIbans]);
 
     useEffect(() => {
         setMobileRenderLimit(MOBILE_RENDER_INITIAL_LIMIT);
@@ -2823,6 +2866,7 @@ export default function NordeaDashboard({
     function transactionWithCategory(transaction: NordeaTransaction, category: NordeaCategoryOption): NordeaTransaction {
         return {
             ...transaction,
+            pending_review: false,
             categoryType: category.categoryType,
             mainCategoryId: category.mainCategoryId,
             mainCategoryName: category.mainCategoryName,
@@ -2874,7 +2918,7 @@ export default function NordeaDashboard({
                 transactions: current.transactions.map((transaction) => parentIdSet.has(transaction.id) ? transactionWithCategory(transaction, category) : transaction),
             };
         });
-        void savePatch(parentIds, { category });
+        void savePatch(parentIds, { category, pending_review: false });
     }
 
     function initialSplitCategory(transaction: NordeaTransaction): NordeaCategoryOption | null {
@@ -2964,6 +3008,7 @@ export default function NordeaDashboard({
             const singleSplit = payload[0];
             const saved = await savePatch([selectedTransaction.id], {
                 splits: [],
+                pending_review: false,
                 ...(singleSplit ? { category: singleSplit.category, note: singleSplit.note } : {}),
             });
             if (saved) {
@@ -2971,7 +3016,7 @@ export default function NordeaDashboard({
             }
             return;
         }
-        const saved = await savePatch([selectedTransaction.id], { splits: payload });
+        const saved = await savePatch([selectedTransaction.id], { splits: payload, pending_review: false });
         if (saved) {
             setSplitModalOpen(false);
         }
@@ -2993,7 +3038,7 @@ export default function NordeaDashboard({
                     ),
                 };
             });
-            void savePatch([row.parentId], { splits: nextSplits });
+            void savePatch([row.parentId], { splits: nextSplits, pending_review: false });
             if (selectNext) {
                 selectNextVisibleRow(row.rowId);
             }
@@ -3013,7 +3058,7 @@ export default function NordeaDashboard({
                 ),
             };
         });
-        void savePatch([row.parentId], { category });
+        void savePatch([row.parentId], { category, pending_review: false });
         if (selectNext) {
             selectNextVisibleRow(row.rowId);
         }
@@ -3208,19 +3253,20 @@ export default function NordeaDashboard({
             ) : null}
             {notice ? <p className="info-banner">{notice}</p> : null}
             {isLocalLedgerSource && !embedded ? <IncomeExpenseOverview series={incomeExpenseSeries} onOpenSunburst={(month) => void openIncomeExpenseSunburst(month)} /> : null}
-            {accounts.length > 0 && !embedded ? (
+            {accounts.length > 0 ? (
                 <section className="account-filter-panel" aria-label="Account filter">
-                    <div className="account-filter-heading">
-                        <div>
-                            <span className="eyebrow">Accounts</span>
-                            <h2>Choose your view</h2>
-                        </div>
-                        <span className="account-filter-count">{selectedAccountIbans.length} of {accounts.length} active</span>
-                    </div>
-                    <div className="account-filter-actions">
-                        <button type="button" className="account-select-all" onClick={() => setSelectedAccountIbans(allAccountsSelected ? [] : accounts.map(accountIban))}>
-                            {allAccountsSelected ? "Clear all" : "Show all"}
-                        </button>
+                    <button
+                        type="button"
+                        className="account-filter-toggle"
+                        aria-expanded={accountFilterOpen}
+                        onClick={() => setAccountFilterOpen((current) => !current)}
+                    >
+                        <span>Konti</span>
+                        <small>{selectedAccountIbans.length} af {accounts.length} valgt</small>
+                        <span aria-hidden="true">{accountFilterOpen ? "▲" : "▼"}</span>
+                    </button>
+                    {accountFilterOpen ? (
+                        <div className="account-filter-actions">
                         <div className="account-chip-grid">
                             {accounts.map((account) => {
                                 const iban = accountIban(account);
@@ -3243,7 +3289,8 @@ export default function NordeaDashboard({
                                 );
                             })}
                         </div>
-                    </div>
+                        </div>
+                    ) : null}
                 </section>
             ) : null}
             <section className="nordea-poster-controls">
@@ -3304,20 +3351,14 @@ export default function NordeaDashboard({
                                 ) : null}
                                 <button
                                     type="button"
-                                    onClick={() => void (isLocalLedgerSource && pendingReviewCount > 0 ? handleAcknowledgePending() : handleRetrieve())}
+                                    onClick={() => void handleRetrieve()}
                                     disabled={retrieving || retrieveChecking || saving || buildingSpiir}
                                 >
-                                    {saving && isLocalLedgerSource && pendingReviewCount > 0
-                                        ? "Gemmer..."
-                                        : retrieving
-                                            ? "Henter..."
-                                            : retrieveChecking
-                                                ? "Tjekker status..."
-                                                : isLocalLedgerSource
-                                                    ? pendingReviewCount > 0
-                                                        ? "Marker gennemgået"
-                                                        : "Hent"
-                                                    : "Hent seneste"}
+                                    {retrieving
+                                        ? "Henter..."
+                                        : retrieveChecking
+                                            ? "Tjekker status..."
+                                            : "Hent seneste"}
                                 </button>
                             </div>
                             <button
@@ -3329,10 +3370,13 @@ export default function NordeaDashboard({
                                     setPeriodFilter("all");
                                     setCustomPeriodStart("");
                                     setCustomPeriodEnd("");
+                                    setSelectedAccountIbans(accounts.map(accountIban));
+                                    setSortKey("booking_date");
+                                    setSortDirection("desc");
                                     resetSearchToLatest();
                                     setPage(1);
                                 }}
-                                disabled={visibilityFilter === "all" && !categoryFilter && periodFilter === "all" && !searchText}
+                                disabled={visibilityFilter === "all" && !categoryFilter && periodFilter === "all" && !searchText && allAccountsSelected && sortKey === "booking_date" && sortDirection === "desc"}
                             >
                                 Nulstil filtre
                             </button>
@@ -3364,7 +3408,7 @@ export default function NordeaDashboard({
                                         onChange={() => setVisibilityFilter("category")}
                                     />
                                     <CategorySelect
-                                        categories={taxonomy.categories}
+                                        categories={availableCategories}
                                         value={categoryFilter ? categoryKey(categoryFilter) : ""}
                                         onChange={(category) => {
                                             if (category) {
@@ -3457,7 +3501,7 @@ export default function NordeaDashboard({
                             key={row.rowId}
                             row={row}
                             expanded={expanded}
-                            categories={taxonomy.categories}
+                            categories={availableCategories}
                             hashtags={taxonomy.hashtags}
                             editControlsDisabled={editControlsDisabled}
                             onOpen={openMobileRow}
@@ -3557,9 +3601,9 @@ export default function NordeaDashboard({
                                         </td>
                                         <td className="nordea-category-cell" onClick={selected ? (event) => event.stopPropagation() : undefined}>
                                             <div className="nordea-category-wrapper">
-                                                {selected && selectedIds.length === 1 && taxonomy.categories.length > 0 ? (
+                                                {selected && selectedIds.length === 1 && availableCategories.length > 0 ? (
                                                     <CategorySelect
-                                                        categories={taxonomy.categories}
+                                                        categories={availableCategories}
                                                         value={isUncategorizedCategory(row.category) ? "" : categoryKey(row.category)}
                                                         onChange={(category) => category ? saveRowCategory(row, category, true) : undefined}
                                                         disabled={editControlsDisabled}
@@ -3591,7 +3635,7 @@ export default function NordeaDashboard({
                     </table>
                 </div>
 
-                {selectedIds.length > 1 && taxonomy.categories.length > 0 ? (
+                {selectedIds.length > 1 && availableCategories.length > 0 ? (
                     <aside className="nordea-edit-panel" ref={editPanelRef} style={{ top: editPanelTop }}>
                         <section className="nordea-bulk-summary">
                             <p>
@@ -3603,7 +3647,7 @@ export default function NordeaDashboard({
                                 Kategori for valgte:
                                 <br />
                             </p>
-                            <CategorySelect categories={taxonomy.categories} value="" onChange={(category) => category ? saveBulkCategory(category) : undefined} disabled={editControlsDisabled} autoFocus openOnFocus={false} bubbleClosedTableKeys />
+                            <CategorySelect categories={availableCategories} value="" onChange={(category) => category ? saveBulkCategory(category) : undefined} disabled={editControlsDisabled} autoFocus openOnFocus={false} bubbleClosedTableKeys />
                         </section>
                         <section>
                             <h5>Tags <small>– Opret nyt</small></h5>
@@ -3658,6 +3702,16 @@ export default function NordeaDashboard({
                             <input type="checkbox" checked={isExtraordinary} onChange={(event) => { setIsExtraordinary(event.target.checked); void savePatch([selectedTransaction.id], { is_extraordinary: event.target.checked }); }} />
                             Ekstraordinær
                         </label>
+                        {isPendingReview(selectedTransaction) ? (
+                            <button
+                                type="button"
+                                className="secondary-button"
+                                disabled={editControlsDisabled}
+                                onClick={() => void savePatch([selectedTransaction.id], { pending_review: false })}
+                            >
+                                Marker denne post som gennemgået
+                            </button>
+                        ) : null}
                         <p className="nordea-origin-text">
                             <span>Oprindelig dato: {formatTxDate(selectedTransaction.original_booking_date ?? selectedTransaction.booking_date)}</span>
                             <span>Oprindelig tekst: {selectedTransaction.remittance_information || selectedTransaction.description}</span>
@@ -3697,7 +3751,7 @@ export default function NordeaDashboard({
                                             ×
                                         </button>
                                     )}
-                                    <CategorySelect categories={taxonomy.categories} value={categoryKey(split.category)} onChange={(category) => setSplitDraftLines((current) => current.map((item) => item.id === split.id ? { ...item, category } : item))} placeholder="Vælg kategori" />
+                                    <CategorySelect categories={availableCategories} value={categoryKey(split.category)} onChange={(category) => setSplitDraftLines((current) => current.map((item) => item.id === split.id ? { ...item, category } : item))} placeholder="Vælg kategori" />
                                     <input value={split.note} onChange={(event) => setSplitDraftLines((current) => current.map((item) => item.id === split.id ? { ...item, note: event.target.value } : item))} placeholder="Skriv note" />
                                     <input className="nordea-split-amount" type="text" inputMode="text" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={split.amountText} disabled={split.locked} onChange={(event) => setSplitDraftLines((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, amount: parseSplitDraftAmount(event.target.value), amountText: event.target.value } : item))} onBlur={() => setSplitDraftLines((current) => current.map((item, itemIndex) => itemIndex === index && Number.isFinite(item.amount) ? { ...item, amountText: formatSplitDraftAmount(item.amount) } : item))} />
                                 </div>

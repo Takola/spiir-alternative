@@ -200,6 +200,7 @@ export interface NordeaAccount {
     name?: string | null;
     product?: string | null;
     currency?: string | null;
+    balance?: { amount?: number | string | null; currency?: string | null; updated_at?: string | null } | null;
 }
 
 export interface NordeaRetrieveResponse {
