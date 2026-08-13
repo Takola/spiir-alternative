@@ -373,6 +373,36 @@
         gap: 0.55rem;
     }
 
+    .spending-source-context {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        margin: -0.1rem 0 0.75rem;
+        padding: 0.5rem 0.65rem;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: var(--accent-soft);
+        color: var(--muted);
+        font-size: 0.78rem;
+    }
+
+    .spending-source-context strong {
+        color: var(--ink);
+    }
+
+    .spending-source-context button {
+        flex: 0 0 auto;
+        min-height: 28px;
+        padding: 0.25rem 0.5rem;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        background: var(--panel-strong);
+        color: var(--accent-strong);
+        font-size: 0.7rem;
+        font-weight: 800;
+    }
+
     .spending-source-filter {
         display: grid;
         flex: 0 0 190px;

@@ -906,6 +906,7 @@ type SpendingSource = {
     label: string;
     searchText: string;
     category: string;
+    subcategory: string;
     spend: number;
     previousSpend: number;
     count: number;
@@ -914,6 +915,14 @@ type SpendingSource = {
     share: number;
     cadence: "Recurring" | "Frequent" | "Occasional";
     change: number | null;
+};
+
+type SpendingSubcategory = {
+    key: string;
+    label: string;
+    category: string;
+    spend: number;
+    share: number;
 };
 
 const SPENDING_SOURCE_ALIASES: Array<[RegExp, string, string]> = [
@@ -965,6 +974,7 @@ function buildSpendingSources(
     periods: string[],
     previousPeriods: string[],
     categoryFilter: string,
+    subcategoryFilter = "",
 ): SpendingSource[] {
     if (!transactions || periods.length === 0) return [];
     const currentSet = new Set(periods);
@@ -973,16 +983,18 @@ function buildSpendingSources(
     for (const transaction of transactions) {
         if (transaction.categoryType !== "Expense" || Number(transaction.amount ?? 0) >= 0) continue;
         const category = String(transaction.mainCategoryName ?? "Diverse");
-        if (category === "Vis ikke" || (categoryFilter && category !== categoryFilter)) continue;
+        const subcategory = String(transaction.categoryName ?? "Ikke kategoriseret");
+        if (category === "Vis ikke" || (categoryFilter && category !== categoryFilter) || (subcategoryFilter && subcategory !== subcategoryFilter)) continue;
         const month = String(transaction.yyyymm ?? transaction.ymd?.slice(0, 7) ?? "");
         if (!currentSet.has(month) && !previousSet.has(month)) continue;
         const identity = spendingSourceIdentity(transaction);
-        const groupKey = `${category}|${identity.key}`;
+        const groupKey = `${category}|${subcategory}|${identity.key}`;
         const group = groups.get(groupKey) ?? {
             key: groupKey,
             label: identity.label,
             searchText: identity.searchText,
             category,
+            subcategory,
             spend: 0,
             previousSpend: 0,
             count: 0,
@@ -1033,6 +1045,7 @@ function BusinessReview({
     const [selectedYear, setSelectedYear] = useState("");
     const [summaryMode, setSummaryMode] = useState<"total" | "average">("total");
     const [spendingCategory, setSpendingCategory] = useState("");
+    const [spendingSubcategory, setSpendingSubcategory] = useState("");
     const [showAllSpendingSources, setShowAllSpendingSources] = useState(false);
     const [spendingTreemapFullscreen, setSpendingTreemapFullscreen] = useState(false);
 
@@ -1163,17 +1176,29 @@ function BusinessReview({
             : step.value)
         .map((value) => new Intl.NumberFormat("da-DK", { maximumFractionDigits: 0 }).format(value));
     const spendingSources = useMemo(
-        () => buildSpendingSources(transactions, reportingCurrentPeriods, reportingPreviousPeriods, spendingCategory),
-        [reportingCurrentPeriods.join("|"), reportingPreviousPeriods.join("|"), spendingCategory, transactions],
+        () => buildSpendingSources(transactions, reportingCurrentPeriods, reportingPreviousPeriods, spendingCategory, spendingSubcategory),
+        [reportingCurrentPeriods.join("|"), reportingPreviousPeriods.join("|"), spendingCategory, spendingSubcategory, transactions],
     );
     const spendingSourceRows = showAllSpendingSources ? spendingSources : spendingSources.slice(0, 12);
     const spendingCategories = [...new Set(buildSpendingSources(transactions, reportingCurrentPeriods, reportingPreviousPeriods, "").map((item) => item.category))].sort((left, right) => left.localeCompare(right, "da"));
-    const spendingTreemapSources = spendingSources;
+    const spendingTreemapSources = useMemo(
+        () => buildSpendingSources(transactions, reportingCurrentPeriods, reportingPreviousPeriods, spendingCategory),
+        [reportingCurrentPeriods.join("|"), reportingPreviousPeriods.join("|"), spendingCategory, transactions],
+    );
     const spendingTreemapCategories = [...new Set(spendingTreemapSources.map((item) => item.category))];
     const spendingTreemapCategoryTotals = new Map(spendingTreemapCategories.map((category) => [
         category,
         spendingTreemapSources.filter((item) => item.category === category).reduce((sum, item) => sum + item.spend, 0),
     ]));
+    const spendingTreemapSubcategories = [...spendingTreemapSources.reduce((groups, source) => {
+        const key = `${source.category}|${source.subcategory}`;
+        const current = groups.get(key) ?? { key, label: source.subcategory, category: source.category, spend: 0, share: 0 };
+        current.spend += source.spend;
+        groups.set(key, current);
+        return groups;
+    }, new Map<string, SpendingSubcategory>()).values()];
+    const spendingTreemapTotal = spendingTreemapSubcategories.reduce((sum, item) => sum + item.spend, 0);
+    spendingTreemapSubcategories.forEach((item) => { item.share = spendingTreemapTotal ? (item.spend / spendingTreemapTotal) * 100 : 0; });
     const spendingPalette = ["#1687a7", "#09ab58", "#e09c38", "#9b70c9", "#e45b55", "#3c8a75", "#c97955", "#6f7fc4"];
     const spendingCategoryColor = new Map(spendingTreemapCategories.map((category, index) => [category, spendingPalette[index % spendingPalette.length]]));
 
@@ -1333,7 +1358,7 @@ function BusinessReview({
                     <div className="spending-source-actions">
                         <label className="spending-source-filter">
                             <span>Category</span>
-                            <select value={spendingCategory} onChange={(event) => { setSpendingCategory(event.target.value); setShowAllSpendingSources(false); }}>
+                            <select value={spendingCategory} onChange={(event) => { setSpendingCategory(event.target.value); setSpendingSubcategory(""); setShowAllSpendingSources(false); }}>
                                 <option value="">All spending</option>
                                 {spendingCategories.map((category) => <option key={category} value={category}>{category}</option>)}
                             </select>
@@ -1349,6 +1374,12 @@ function BusinessReview({
                         </button>
                     </div>
                 </div>
+                {spendingSubcategory ? (
+                    <div className="spending-source-context">
+                        <span>Showing sources in <strong>{spendingSubcategory}</strong>{spendingCategory ? ` · ${spendingCategory}` : ""}</span>
+                        <button type="button" onClick={() => setSpendingSubcategory("")}>Clear subcategory</button>
+                    </div>
+                ) : null}
                 {spendingSourceRows.length > 0 ? (
                     <div className="spending-source-layout">
                         <Plot
@@ -1357,36 +1388,36 @@ function BusinessReview({
                                 type: "treemap",
                                 ids: [
                                     ...spendingTreemapCategories.map((category) => `category:${category}`),
-                                    ...spendingTreemapSources.map((item) => `source:${item.key}`),
+                                    ...spendingTreemapSubcategories.map((item) => `subcategory:${item.key}`),
                                 ],
                                 labels: [
                                     ...spendingTreemapCategories,
-                                    ...spendingTreemapSources.map((item) => item.label),
+                                    ...spendingTreemapSubcategories.map((item) => item.label),
                                 ],
                                 parents: [
                                     ...spendingTreemapCategories.map(() => ""),
-                                    ...spendingTreemapSources.map((item) => `category:${item.category}`),
+                                    ...spendingTreemapSubcategories.map((item) => `category:${item.category}`),
                                 ],
                                 values: [
                                     ...spendingTreemapCategories.map((category) => spendingTreemapCategoryTotals.get(category) ?? 0),
-                                    ...spendingTreemapSources.map((item) => item.spend),
+                                    ...spendingTreemapSubcategories.map((item) => item.spend),
                                 ],
                                 customdata: [
                                     ...spendingTreemapCategories.map(() => ""),
-                                    ...spendingTreemapSources.map((item) => item.searchText),
+                                    ...spendingTreemapSubcategories.map((item) => item.label),
                                 ],
                                 branchvalues: "total",
                                 marker: {
                                     colors: [
                                         ...spendingTreemapCategories.map((category) => spendingCategoryColor.get(category)),
-                                        ...spendingTreemapSources.map((item) => spendingCategoryColor.get(item.category)),
+                                        ...spendingTreemapSubcategories.map((item) => spendingCategoryColor.get(item.category)),
                                     ],
                                     line: { color: "rgba(255,255,255,.28)", width: 1 },
                                 },
                                 textinfo: "none",
                                 texttemplate: [
                                     ...spendingTreemapCategories.map(() => "<b>%{label}</b><br>%{percentRoot:.0%}"),
-                                    ...spendingTreemapSources.map((item) => item.share >= (spendingTreemapFullscreen ? 0.12 : 0.6) ? "<b>%{label}</b><br>%{percentRoot:.1%}" : ""),
+                                    ...spendingTreemapSubcategories.map((item) => item.share >= (spendingTreemapFullscreen ? 0.12 : 0.6) ? "<b>%{label}</b><br>%{percentRoot:.1%}" : ""),
                                 ],
                                 textfont: { color: "#f7fffa", size: spendingTreemapFullscreen ? 11 : 11 },
                                 hovertemplate: "<b>%{label}</b><br>%{value:,.0f} kr · %{percentRoot:.1%} of spending<extra></extra>",
@@ -1399,16 +1430,20 @@ function BusinessReview({
                             onClick={(event) => {
                                 const point = event.points[0] as unknown as { id?: unknown; customdata?: unknown; label?: unknown } | undefined;
                                 const id = String(point?.id ?? "");
-                                const label = String(point?.label ?? "Spending source");
                                 if (id.startsWith("category:")) {
                                     setSpendingTreemapFullscreen(false);
                                     setSpendingCategory(id.slice("category:".length));
+                                    setSpendingSubcategory("");
                                     setShowAllSpendingSources(false);
                                     return;
                                 }
-                                const searchText = String(point?.customdata ?? "");
                                 setSpendingTreemapFullscreen(false);
-                                if (searchText) onOpenSpendingSource(`${label} · ${selectedYear} YTD`, searchText, reportingCurrentPeriods);
+                                if (id.startsWith("subcategory:")) {
+                                    const [category, subcategory] = id.slice("subcategory:".length).split("|");
+                                    setSpendingCategory(category);
+                                    setSpendingSubcategory(subcategory);
+                                    setShowAllSpendingSources(false);
+                                }
                             }}
                         />
                         <div className={`spending-source-list${showAllSpendingSources ? " expanded" : ""}`} role="list" aria-label="Top spending sources">
@@ -1429,7 +1464,7 @@ function BusinessReview({
                                 >
                                     <span className="spending-source-copy">
                                         <strong>{item.label}</strong>
-                                        <small>{item.category} · {item.count} {item.count === 1 ? "payment" : "payments"} across {item.monthCount} {item.monthCount === 1 ? "month" : "months"} · avg {formatBusinessValue(item.average)}</small>
+                                        <small>{item.subcategory} · {item.count} {item.count === 1 ? "payment" : "payments"} across {item.monthCount} {item.monthCount === 1 ? "month" : "months"} · avg {formatBusinessValue(item.average)}</small>
                                         <span className="spending-source-track"><span style={{ width: `${Math.max(3, item.share)}%`, background: spendingCategoryColor.get(item.category) }} /></span>
                                     </span>
                                     <span className="spending-source-value">
