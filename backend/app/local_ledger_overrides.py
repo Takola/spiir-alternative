@@ -3,6 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
+from .taxonomy import (
+    UNCATEGORIZED_CATEGORY_NAME,
+    UNCATEGORIZED_MAIN_CATEGORY_NAME,
+)
+
 LOCAL_LEDGER_OVERRIDE_KEYS = {
     "date",
     "comment",
@@ -21,6 +26,39 @@ LOCAL_LEDGER_OVERRIDE_KEYS = {
     "category_confidence",
     "updated_at",
 }
+
+
+def sanitize_category(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    category_id = value.get("categoryId")
+    if category_id in (None, ""):
+        return None
+    return {
+        "categoryType": value.get("categoryType") or "Expense",
+        "mainCategoryId": value.get("mainCategoryId"),
+        "mainCategoryName": value.get("mainCategoryName") or UNCATEGORIZED_MAIN_CATEGORY_NAME,
+        "categoryId": category_id,
+        "categoryName": value.get("categoryName") or UNCATEGORIZED_CATEGORY_NAME,
+    }
+
+
+def sanitize_split(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    try:
+        amount = float(value.get("amount") or 0)
+    except (TypeError, ValueError):
+        return None
+    category = sanitize_category(value.get("category"))
+    if category is None:
+        return None
+    return {
+        "id": str(value.get("id") or f"split-{abs(hash(repr(value)))}"),
+        "amount": amount,
+        "note": str(value.get("note") or ""),
+        "category": category,
+    }
 
 
 def load_local_ledger_overrides(

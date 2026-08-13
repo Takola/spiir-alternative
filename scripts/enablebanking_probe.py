@@ -12,12 +12,8 @@ import jwt
 import requests
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-APP_ID = os.getenv("ENABLEBANKING_APP_ID", "").strip()
 API_BASE = "https://api.enablebanking.com"
 DATA_ROOT = Path(os.getenv("SPIIR_ALT_DATA_DIR", ROOT_DIR / "data")).expanduser().resolve()
-KEY_PATH = Path(
-    os.getenv("ENABLEBANKING_PRIVATE_KEY_PATH", DATA_ROOT / "local_secrets" / "enablebanking" / f"{APP_ID or 'app-id'}.pem")
-).expanduser().resolve()
 DATA_DIR = DATA_ROOT / "transactions" / "enablebanking"
 RAW_DIR = DATA_ROOT / "transactions" / "raw" / "enablebanking"
 REDIRECT_URL = os.getenv("ENABLEBANKING_REDIRECT_URL", "http://127.0.0.1:8000/enablebanking/callback")
@@ -36,10 +32,27 @@ def write_json(path: Path, payload: Any) -> None:
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
+def enablebanking_credentials() -> tuple[str, Path]:
+    configured_app_id = os.getenv("ENABLEBANKING_APP_ID", "").strip()
+    configured_key = os.getenv("ENABLEBANKING_PRIVATE_KEY_PATH", "").strip()
+    if configured_key:
+        key_path = Path(configured_key).expanduser().resolve()
+        app_id = configured_app_id or key_path.stem
+        return app_id, key_path
+    key_dir = DATA_ROOT / "local_secrets" / "enablebanking"
+    if configured_app_id:
+        return configured_app_id, key_dir / f"{configured_app_id}.pem"
+    key_files = sorted(key_dir.glob("*.pem")) if key_dir.exists() else []
+    if len(key_files) == 1:
+        return key_files[0].stem, key_files[0]
+    raise RuntimeError(
+        f"Place one Enable Banking private key in {key_dir}, or set ENABLEBANKING_APP_ID"
+    )
+
+
 def auth_headers() -> dict[str, str]:
-    if not APP_ID:
-        raise RuntimeError("Set ENABLEBANKING_APP_ID")
-    private_key = KEY_PATH.read_bytes()
+    app_id, key_path = enablebanking_credentials()
+    private_key = key_path.read_bytes()
     issued_at = int(utc_now().timestamp())
     token = jwt.encode(
         {
@@ -50,7 +63,7 @@ def auth_headers() -> dict[str, str]:
         },
         private_key,
         algorithm="RS256",
-        headers={"kid": APP_ID},
+        headers={"kid": app_id},
     )
     return {"Authorization": f"Bearer {token}", "Accept": "application/json"}
 
@@ -66,22 +79,20 @@ def request_json(method: str, path: str, **kwargs: Any) -> Any:
     return payload
 
 
-def command_aspsps() -> None:
+def command_aspsps(name_filter: str | None = None) -> None:
     payload = request_json("GET", "/aspsps", params={"country": "DK", "service": "AIS", "psu_type": "personal"})
     write_json(DATA_DIR / "aspsps_dk_personal_ais.json", payload)
-    matches = [item for item in payload.get("aspsps", []) if "nordea" in item.get("name", "").lower()]
+    matches = payload.get("aspsps", [])
+    if name_filter:
+        matches = [item for item in matches if name_filter.casefold() in item.get("name", "").casefold()]
     print(json.dumps(matches, indent=2, ensure_ascii=False))
     print(f"\nSaved full ASPSP list: {DATA_DIR / 'aspsps_dk_personal_ais.json'}")
 
 
-def command_auth_url(days: int, aspsp_name: str | None = None, aspsp_country: str | None = None) -> None:
+def command_auth_url(days: int, aspsp_name: str, aspsp_country: str = "DK") -> None:
     state = str(uuid.uuid4())
     valid_until = (utc_now() + dt.timedelta(days=days)).isoformat().replace("+00:00", "Z")
-    aspsp = {"name": "Nordea", "country": "DK"}
-    if aspsp_name:
-        aspsp["name"] = aspsp_name
-    if aspsp_country:
-        aspsp["country"] = aspsp_country
+    aspsp = {"name": aspsp_name, "country": aspsp_country}
     body = {
         "access": {"balances": True, "transactions": True, "valid_until": valid_until},
         "aspsp": aspsp,
@@ -146,12 +157,13 @@ def command_transactions(args: argparse.Namespace) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Enable Banking local feasibility probe")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    subparsers.add_parser("aspsps")
+    aspsps_parser = subparsers.add_parser("aspsps")
+    aspsps_parser.add_argument("--name", help="Optional case-insensitive bank name filter")
 
     auth_parser = subparsers.add_parser("auth-url")
     auth_parser.add_argument("--days", type=int, default=170)
-    auth_parser.add_argument("--aspsp-name", help="ASPSP name to request (e.g. 'Lån og spar')")
-    auth_parser.add_argument("--aspsp-country", help="ASPSP country code (e.g. 'DK')")
+    auth_parser.add_argument("--aspsp-name", required=True, help="ASPSP name from the aspsps command")
+    auth_parser.add_argument("--aspsp-country", default="DK", help="ASPSP country code")
 
     session_parser = subparsers.add_parser("session")
     session_parser.add_argument("--code", required=True)
@@ -164,7 +176,7 @@ def main() -> None:
 
     args = parser.parse_args()
     if args.command == "aspsps":
-        command_aspsps()
+        command_aspsps(args.name)
     elif args.command == "auth-url":
         command_auth_url(args.days, aspsp_name=getattr(args, "aspsp_name", None), aspsp_country=getattr(args, "aspsp_country", None))
     elif args.command == "session":

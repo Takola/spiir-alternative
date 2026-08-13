@@ -6,22 +6,16 @@ from typing import Annotated, Any
 from fastapi import FastAPI, HTTPException, Query, status
 
 from .config import get_data_dir
-from .nordea_service import (
-    get_nordea_retrieve_status,
-    load_nordea_taxonomy,
-    load_nordea_transactions,
-    refresh_nordea_account_balances,
-    retrieve_nordea_transactions,
-    save_nordea_overrides,
-    start_nordea_retrieve_job,
+from .enable_banking_service import (
+    get_bank_retrieve_status,
+    load_ledger_taxonomy,
+    start_bank_retrieve_job,
 )
 from .spiir_local_ledger_service import (
-    apply_nordea_sync_into_spiir_local_ledger,
     apply_spiir_local_ledger_import,
     apply_spiir_local_ledger_split_canonicalization,
     apply_spiir_local_ledger_split_fragment_repair,
     load_spiir_local_ledger_transactions,
-    preview_nordea_sync_into_spiir_local_ledger,
     preview_spiir_local_ledger_import,
     preview_spiir_local_ledger_split_canonicalization,
     preview_spiir_local_ledger_split_fragment_repair,
@@ -44,7 +38,7 @@ def iso_utc() -> str:
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Spiir Alternative Reference API", version="0.1.0")
+    app = FastAPI(title="Spiir Alternative API", version="0.2.0")
 
     @app.get("/api/status")
     def status_route() -> dict[str, object]:
@@ -107,20 +101,6 @@ def create_app() -> FastAPI:
         except FileNotFoundError as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
-    @app.get("/api/spiir/local-ledger/nordea-sync/preview")
-    def nordea_sync_preview() -> dict[str, object]:
-        try:
-            return preview_nordea_sync_into_spiir_local_ledger()
-        except (FileNotFoundError, ValueError) as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-
-    @app.post("/api/spiir/local-ledger/nordea-sync/apply")
-    def nordea_sync_apply() -> dict[str, object]:
-        try:
-            return apply_nordea_sync_into_spiir_local_ledger()
-        except (FileNotFoundError, ValueError) as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-
     @app.get("/api/spiir/local-ledger/transactions")
     def local_ledger_transactions(
         limit: Annotated[int | None, Query(ge=1)] = None,
@@ -162,43 +142,17 @@ def create_app() -> FastAPI:
     def split_repair_apply() -> dict[str, object]:
         return apply_spiir_local_ledger_split_fragment_repair()
 
-    @app.get("/api/nordea/transactions")
-    def nordea_transactions() -> dict[str, object]:
-        return load_nordea_transactions()
+    @app.get("/api/ledger/taxonomy")
+    def ledger_taxonomy() -> dict[str, object]:
+        return load_ledger_taxonomy()
 
-    @app.post("/api/nordea/refresh-balances")
-    def nordea_refresh_balances() -> dict[str, int | str | None]:
-        return refresh_nordea_account_balances()
+    @app.post("/api/bank/retrieve/start")
+    def bank_retrieve_start() -> dict[str, object]:
+        return start_bank_retrieve_job(sync_local_ledger=True)
 
-    @app.get("/api/nordea/taxonomy")
-    def nordea_taxonomy() -> dict[str, object]:
-        return load_nordea_taxonomy()
-
-    @app.post("/api/nordea/overrides")
-    def nordea_overrides(payload: dict[str, Any]) -> dict[str, object]:
-        try:
-            transaction_ids = [str(item) for item in payload.get("transaction_ids", [])]
-            patch = payload.get("patch", {})
-            if not isinstance(patch, dict):
-                raise ValueError("Invalid Nordea override patch")
-            return save_nordea_overrides(transaction_ids, patch)
-        except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-
-    @app.post("/api/nordea/retrieve")
-    def nordea_retrieve() -> dict[str, object]:
-        try:
-            return retrieve_nordea_transactions()
-        except (FileNotFoundError, RuntimeError) as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-
-    @app.post("/api/nordea/retrieve/start")
-    def nordea_retrieve_start() -> dict[str, object]:
-        return start_nordea_retrieve_job(sync_local_ledger=True)
-
-    @app.get("/api/nordea/retrieve/status")
-    def nordea_retrieve_status() -> dict[str, object]:
-        return get_nordea_retrieve_status()
+    @app.get("/api/bank/retrieve/status")
+    def bank_retrieve_status() -> dict[str, object]:
+        return get_bank_retrieve_status()
 
     return app
 

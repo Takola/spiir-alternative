@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.spiir_local_ledger_service import _autocategorize_rows
+from app.autocategorization import _autocategorize_rows
 
 
 def row(

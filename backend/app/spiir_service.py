@@ -29,9 +29,15 @@ from .local_ledger_overrides import (
     load_local_ledger_overrides,
 )
 from .storage import create_backup
+from .taxonomy import (
+    SKIP_MAIN_CATEGORY_NAMES,
+    UNCATEGORIZED_CATEGORY_ID,
+    UNCATEGORIZED_CATEGORY_NAME,
+    UNCATEGORIZED_MAIN_CATEGORY_ID,
+    UNCATEGORIZED_MAIN_CATEGORY_NAME,
+)
 
 SKIP_IS_EXTRAORDINARY = True
-SKIP_MAIN_CATEGORY_NAMES = {"Vis ikke"}
 SKIP_ACCOUNT_NAMES = {"Andelsboliglån"}
 SKIP_YEAR_STRINGS = {"2011"}
 INCOME_EXPENSE_SERIES_CACHE_VERSION = 1
@@ -40,11 +46,6 @@ SPIIR_REBUILD_IDLE_DELAY_SECONDS = 10.0
 RENAME_MAIN_CATEGORY_NAME = {
     "Andre leveomkostninger": "Andet",
 }
-
-UNCATEGORIZED_MAIN_CATEGORY_NAME = "Diverse"
-UNCATEGORIZED_MAIN_CATEGORY_ID = "synthetic-diverse"
-UNCATEGORIZED_CATEGORY_NAME = "Ikke kategoriseret"
-UNCATEGORIZED_CATEGORY_ID = "synthetic-uncategorized"
 
 _SPIIR_REBUILD_STATE: dict[str, Any] = {"timer": None, "running": False, "rerun_requested": False}
 _SPIIR_REBUILD_LOCK = threading.Lock()

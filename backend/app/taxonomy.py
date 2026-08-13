@@ -4,7 +4,6 @@ import re
 import unicodedata
 from typing import Any
 
-
 CATEGORY_CATALOG: dict[str, list[str]] = {
     "Bolig": ["Boliglån/husleje", "El, vand, varme & renovation", "Ejerforening", "Ejendomsskat", "Husforsikring", "Indbo- & familieforsikring", "Alarmsystem", "Udgifter fritidshus", "Ombygning & vedligehold", "Have & planter", "Andre boligudgifter"],
     "Transport": ["Bil-, MC-, bådlån o.l.", "Brændstof", "Bilforsikring & autohjælp", "Ejerafgift/grøn afgift", "Bus, tog, færge o.l.", "Taxi", "Parkering", "Værksted & reservedele", "Anden transport"],
@@ -20,6 +19,12 @@ CATEGORY_CATALOG: dict[str, list[str]] = {
 }
 
 CATEGORY_TYPES = {"Indkomst": "Income", "Pension & Opsparing": "Investment"}
+
+SKIP_MAIN_CATEGORY_NAMES = {"Vis ikke"}
+UNCATEGORIZED_MAIN_CATEGORY_NAME = "Diverse"
+UNCATEGORIZED_MAIN_CATEGORY_ID = "synthetic-diverse"
+UNCATEGORIZED_CATEGORY_NAME = "Ikke kategoriseret"
+UNCATEGORIZED_CATEGORY_ID = "synthetic-uncategorized"
 
 
 def _slug(value: str) -> str:

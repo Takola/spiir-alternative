@@ -50,3 +50,48 @@ def test_difference_excludes_investments() -> None:
 
     assert difference["label"] == "Difference"
     assert difference["values"][period] == 41673
+
+
+def _expense_row(period: str, amount: float, description: str) -> dict[str, object]:
+    return {
+        "yyyymm": period,
+        "amount": amount,
+        "categoryType": "Expense",
+        "mainCategoryName": "Privatforbrug",
+        "mainCategoryId": "private",
+        "categoryName": "Bar, cafe & restaurant",
+        "categoryId": "restaurant",
+        "comment": description,
+        "hashtags": [],
+    }
+
+
+def test_positive_expense_reimbursement_offsets_the_original_cost() -> None:
+    period = "2026-08"
+    frame = pd.DataFrame(
+        [
+            _expense_row(period, -1000, "Dinner paid for the group"),
+            _expense_row(period, 1000, "MobilePay reimbursement"),
+        ]
+    )
+
+    overview = _make_period_overview(frame, [period], "yyyymm")
+    expense = next(row for row in overview["rows"] if row["key"] == "expense")
+
+    assert expense["values"][period] == 0
+
+
+def test_refund_and_repurchase_count_only_the_final_purchase() -> None:
+    period = "2026-08"
+    frame = pd.DataFrame(
+        [
+            _expense_row(period, -9000, "Original purchase"),
+            _expense_row(period, 9000, "Refund to account"),
+            _expense_row(period, -9000, "Repurchase with gift card"),
+        ]
+    )
+
+    overview = _make_period_overview(frame, [period], "yyyymm")
+    expense = next(row for row in overview["rows"] if row["key"] == "expense")
+
+    assert expense["values"][period] == -9000

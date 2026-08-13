@@ -8,9 +8,9 @@ set "ENABLEBANKING_PSU_ID=spiir-alternative-local"
 set "SPIIR_CUTOVER_DATE=2025-01-01"
 
 rem Stop stale backend instances and orphaned reload workers holding port 8000.
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$owners=@(Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue ^| Select-Object -ExpandProperty OwningProcess -Unique); $processes=@(Get-CimInstance Win32_Process); $ids=@($processes ^| Where-Object { $_.CommandLine -match 'uvicorn app\.reference_api:app' -and $_.CommandLine -match 'spiir-alternative' } ^| Select-Object -ExpandProperty ProcessId); foreach($ownerPid in $owners){ $ids += $ownerPid; $ids += @($processes ^| Where-Object { $_.CommandLine -match ('parent_pid=' + $ownerPid + '\b') } ^| Select-Object -ExpandProperty ProcessId) }; $ids ^| Sort-Object -Unique ^| ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$owners=@(Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue ^| Select-Object -ExpandProperty OwningProcess -Unique); $processes=@(Get-CimInstance Win32_Process); $ids=@($processes ^| Where-Object { $_.CommandLine -match 'uvicorn app\.api:app' -and $_.CommandLine -match 'spiir-alternative' } ^| Select-Object -ExpandProperty ProcessId); foreach($ownerPid in $owners){ $ids += $ownerPid; $ids += @($processes ^| Where-Object { $_.CommandLine -match ('parent_pid=' + $ownerPid + '\b') } ^| Select-Object -ExpandProperty ProcessId) }; $ids ^| Sort-Object -Unique ^| ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }"
 
-start "Spiir Alternative - Backend" cmd.exe /k ""%~dp0.venv\Scripts\python.exe" -m uvicorn app.reference_api:app --app-dir "%~dp0backend" --port 8000"
+start "Spiir Alternative - Backend" cmd.exe /k ""%~dp0.venv\Scripts\python.exe" -m uvicorn app.api:app --app-dir "%~dp0backend" --host 127.0.0.1 --port 8000"
 start "Spiir Alternative - Frontend" cmd.exe /k "cd /d ""%~dp0frontend"" && npm.cmd run dev"
 
 echo Started the backend and frontend in separate windows.

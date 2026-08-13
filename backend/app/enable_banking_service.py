@@ -25,28 +25,23 @@ from .spiir_service import (
     UNCATEGORIZED_CATEGORY_NAME,
     UNCATEGORIZED_MAIN_CATEGORY_ID,
     UNCATEGORIZED_MAIN_CATEGORY_NAME,
-    _append_hashtags_to_comment,
-    _extract_hashtags,
-    _normalize_hashtags,
-    _remove_hashtags_from_comment,
 )
-from .storage import create_backup
 from .taxonomy import built_in_categories
 
 API_BASE = "https://api.enablebanking.com"
 ALIAS_RE = re.compile(r"[0-9A-Za-z_æøåÆØÅ-]{3,}")
-NORDEA_TAXONOMY_CACHE_VERSION = 3
-NORDEA_INCREMENTAL_LOOKBACK_DAYS = 7
+LEDGER_TAXONOMY_CACHE_VERSION = 3
+BANK_INCREMENTAL_LOOKBACK_DAYS = 7
 INCOME_DESCRIPTION_RE = re.compile(
     r"\b(l[oø]n(?:overf[oø]rsel)?|b[oø]rne-?\s*og\s*ungeydelse|dagpenge|feriepenge|pensionsudbetaling)\b",
     re.I,
 )
-_NORDEA_TAXONOMY_CACHE: dict[str, Any] = {
+_LEDGER_TAXONOMY_CACHE: dict[str, Any] = {
     "key": None,
     "payload": None,
 }
-_NORDEA_RETRIEVE_STATE: dict[str, Any] = {"thread": None}
-_NORDEA_RETRIEVE_LOCK = threading.Lock()
+_BANK_RETRIEVE_STATE: dict[str, Any] = {"thread": None}
+_BANK_RETRIEVE_LOCK = threading.Lock()
 
 
 def _iso_utc_now() -> str:
@@ -73,15 +68,19 @@ def _raw_dir() -> Path:
 
 
 def _processed_file() -> Path:
+    return _enablebanking_dir() / "transactions.json"
+
+
+def _legacy_processed_file() -> Path:
     return _transactions_dir() / "nordea" / "transactions.json"
 
 
 def _retrieve_status_file() -> Path:
+    return _enablebanking_dir() / "retrieve_status.json"
+
+
+def _legacy_retrieve_status_file() -> Path:
     return _transactions_dir() / "nordea" / "retrieve_status.json"
-
-
-def _overrides_file() -> Path:
-    return _transactions_dir() / "nordea" / "overrides.json"
 
 
 def _session_file() -> Path:
@@ -170,6 +169,8 @@ def _write_json(path: Path, payload: Any) -> None:
 def _read_retrieve_status() -> dict[str, Any] | None:
     path = _retrieve_status_file()
     if not path.exists():
+        path = _legacy_retrieve_status_file()
+    if not path.exists():
         return None
     try:
         payload = _read_json(path)
@@ -193,11 +194,11 @@ def _new_retrieve_status(job_id: str) -> dict[str, Any]:
         "updated_at": now,
         "completed_at": None,
         "progress": 1,
-        "current_phase": "Starter Nordea-hentning",
+        "current_phase": "Starter bankhentning",
         "events": [
             {
                 "at": now,
-                "label": "Starter Nordea-hentning",
+                "label": "Starter bankhentning",
                 "progress": 1,
             }
         ],
@@ -228,23 +229,17 @@ def _append_retrieve_event(status_payload: dict[str, Any], label: str, progress:
     return _write_retrieve_status(status_payload)
 
 
-def _write_json_with_backup(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    create_backup(path)
-    _write_json(path, payload)
+def _ledger_taxonomy_cache_file() -> Path:
+    return get_spiir_local_transactions_file().parent / "cache" / "ledger_taxonomy.json"
 
 
-def _nordea_taxonomy_cache_file() -> Path:
-    return get_spiir_local_transactions_file().parent / "cache" / "nordea_taxonomy.json"
-
-
-def _nordea_taxonomy_cache_signature() -> dict[str, Any]:
+def _ledger_taxonomy_cache_signature() -> dict[str, Any]:
     local_transactions_path = get_spiir_local_transactions_file()
     local_overrides_path = get_spiir_local_overrides_file()
     raw_path = get_spiir_raw_export_file()
     if local_transactions_path.exists():
         return {
-            "schema_version": NORDEA_TAXONOMY_CACHE_VERSION,
+            "schema_version": LEDGER_TAXONOMY_CACHE_VERSION,
             "source": "local",
             "sources": {
                 "transactions": _file_cache_stat(local_transactions_path),
@@ -252,7 +247,7 @@ def _nordea_taxonomy_cache_signature() -> dict[str, Any]:
             },
         }
     return {
-        "schema_version": NORDEA_TAXONOMY_CACHE_VERSION,
+        "schema_version": LEDGER_TAXONOMY_CACHE_VERSION,
         "source": "raw",
         "sources": {
             "raw_export": _file_cache_stat(raw_path),
@@ -260,8 +255,8 @@ def _nordea_taxonomy_cache_signature() -> dict[str, Any]:
     }
 
 
-def _read_nordea_taxonomy_file_cache(signature: dict[str, Any]) -> dict[str, Any] | None:
-    cache_file = _nordea_taxonomy_cache_file()
+def _read_ledger_taxonomy_file_cache(signature: dict[str, Any]) -> dict[str, Any] | None:
+    cache_file = _ledger_taxonomy_cache_file()
     if not cache_file.exists():
         return None
     try:
@@ -274,21 +269,21 @@ def _read_nordea_taxonomy_file_cache(signature: dict[str, Any]) -> dict[str, Any
     return response if isinstance(response, dict) else None
 
 
-def _write_nordea_taxonomy_file_cache(signature: dict[str, Any], response: dict[str, Any]) -> None:
+def _write_ledger_taxonomy_file_cache(signature: dict[str, Any], response: dict[str, Any]) -> None:
     payload = {
         "signature": signature,
         "cached_at": _iso_utc_now(),
         "response": response,
     }
     try:
-        _write_json(_nordea_taxonomy_cache_file(), payload)
+        _write_json(_ledger_taxonomy_cache_file(), payload)
     except OSError:
         return
 
 
-def _set_nordea_taxonomy_memory_cache(signature: dict[str, Any], payload: dict[str, Any]) -> None:
-    _NORDEA_TAXONOMY_CACHE["key"] = signature
-    _NORDEA_TAXONOMY_CACHE["payload"] = payload
+def _set_ledger_taxonomy_memory_cache(signature: dict[str, Any], payload: dict[str, Any]) -> None:
+    _LEDGER_TAXONOMY_CACHE["key"] = signature
+    _LEDGER_TAXONOMY_CACHE["payload"] = payload
 
 
 def _auth_headers() -> dict[str, str]:
@@ -392,6 +387,7 @@ def _normalize_transaction(account: dict[str, Any], transaction: dict[str, Any])
     category_id = "synthetic-income-default" if is_income else UNCATEGORIZED_CATEGORY_ID
     category_name = "Løn og ydelser" if is_income else UNCATEGORIZED_CATEGORY_NAME
     return {
+        # Preserve the legacy ID/source values so existing local overrides keep matching.
         "id": f"enablebanking:nordea:{account_key}:{entry_reference}",
         "entry_reference": entry_reference,
         "booking_date": booking_date,
@@ -422,90 +418,6 @@ def _normalize_transaction(account: dict[str, Any], transaction: dict[str, Any])
     }
 
 
-def _load_overrides() -> dict[str, Any]:
-    path = _overrides_file()
-    if not path.exists():
-        return {"schema_version": "1.0", "updated_at": None, "transactions": {}}
-    payload = _read_json(path)
-    if not isinstance(payload, dict):
-        return {"schema_version": "1.0", "updated_at": None, "transactions": {}}
-    payload.setdefault("schema_version", "1.0")
-    payload.setdefault("updated_at", None)
-    payload.setdefault("transactions", {})
-    return payload
-
-
-def _sanitize_category(value: Any) -> dict[str, Any] | None:
-    if not isinstance(value, dict):
-        return None
-    category_id = value.get("categoryId")
-    if category_id in (None, ""):
-        return None
-    return {
-        "categoryType": value.get("categoryType") or "Expense",
-        "mainCategoryId": value.get("mainCategoryId"),
-        "mainCategoryName": value.get("mainCategoryName") or UNCATEGORIZED_MAIN_CATEGORY_NAME,
-        "categoryId": category_id,
-        "categoryName": value.get("categoryName") or UNCATEGORIZED_CATEGORY_NAME,
-    }
-
-
-def _sanitize_split(value: Any) -> dict[str, Any] | None:
-    if not isinstance(value, dict):
-        return None
-    try:
-        amount = float(value.get("amount") or 0)
-    except (TypeError, ValueError):
-        return None
-    category = _sanitize_category(value.get("category"))
-    if category is None:
-        return None
-    return {
-        "id": str(value.get("id") or f"split-{abs(hash(json.dumps(value, sort_keys=True, default=str)))}"),
-        "amount": amount,
-        "note": str(value.get("note") or ""),
-        "category": category,
-    }
-
-
-def _apply_override(transaction: dict[str, Any], override: dict[str, Any] | None) -> dict[str, Any]:
-    next_transaction = dict(transaction)
-    next_transaction["original_booking_date"] = transaction.get("booking_date")
-    next_transaction.setdefault("categoryType", "Expense")
-    next_transaction.setdefault("mainCategoryId", UNCATEGORIZED_MAIN_CATEGORY_ID)
-    next_transaction.setdefault("mainCategoryName", UNCATEGORIZED_MAIN_CATEGORY_NAME)
-    next_transaction.setdefault("categoryId", UNCATEGORIZED_CATEGORY_ID)
-    next_transaction.setdefault("categoryName", UNCATEGORIZED_CATEGORY_NAME)
-    next_transaction.setdefault("note", "")
-    next_transaction.setdefault("hashtags", [])
-    next_transaction.setdefault("is_extraordinary", False)
-    next_transaction.setdefault("splits", [])
-    if not override:
-        return next_transaction
-    category = _sanitize_category(override.get("category"))
-    if category:
-        next_transaction.update(category)
-    custom_date = str(override.get("booking_date") or "").strip()
-    if custom_date:
-        next_transaction["booking_date"] = custom_date
-        next_transaction["custom_booking_date"] = custom_date
-    next_transaction["note"] = str(override.get("note") or "")
-    next_transaction["hashtags"] = [str(item).strip() for item in override.get("hashtags") or [] if str(item).strip()]
-    next_transaction["is_extraordinary"] = bool(override.get("is_extraordinary"))
-    next_transaction["splits"] = [split for item in override.get("splits") or [] if (split := _sanitize_split(item)) is not None]
-    return next_transaction
-
-
-def _apply_overrides(payload: dict[str, Any]) -> dict[str, Any]:
-    overrides = _load_overrides().get("transactions", {})
-    next_payload = dict(payload)
-    next_payload["transactions"] = [
-        _apply_override(transaction, overrides.get(transaction.get("id")))
-        for transaction in payload.get("transactions", [])
-    ]
-    return next_payload
-
-
 def _dedupe_key(transaction: dict[str, Any]) -> str:
     account_key = transaction.get("account_iban") or transaction.get("account_name") or "unknown"
     reference = transaction.get("entry_reference") or transaction.get("id") or "unknown"
@@ -519,6 +431,8 @@ def _latest_local_raw_file() -> Path | None:
 
 def _load_processed() -> dict[str, Any]:
     path = _processed_file()
+    if not path.exists() and _legacy_processed_file().exists():
+        path = _legacy_processed_file()
     if path.exists():
         return _read_json(path)
     raw_file = _latest_local_raw_file()
@@ -536,7 +450,7 @@ def _load_processed() -> dict[str, Any]:
 
 
 def _merge_raw_payload(raw_payload: dict[str, Any]) -> dict[str, Any]:
-    current = _load_processed() if _processed_file().exists() else {"transactions": [], "accounts": []}
+    current = _load_processed()
     account = raw_payload.get("account") or {}
     normalized = [_normalize_transaction(account, transaction) for transaction in raw_payload.get("transactions", [])]
     by_id = {_dedupe_key(transaction): transaction for transaction in current.get("transactions", [])}
@@ -584,7 +498,7 @@ def _retrieve_params_for_existing_data(*, incremental: bool) -> tuple[dict[str, 
     if latest_booking_date is None:
         return {"strategy": "longest", "transaction_status": "BOOK"}, {"mode": "full", "lookback_days": None, "latest_booking_date": None}
 
-    date_from = latest_booking_date - dt.timedelta(days=NORDEA_INCREMENTAL_LOOKBACK_DAYS)
+    date_from = latest_booking_date - dt.timedelta(days=BANK_INCREMENTAL_LOOKBACK_DAYS)
     date_to = dt.datetime.now(dt.UTC).date()
     return (
         {
@@ -594,7 +508,7 @@ def _retrieve_params_for_existing_data(*, incremental: bool) -> tuple[dict[str, 
         },
         {
             "mode": "incremental",
-            "lookback_days": NORDEA_INCREMENTAL_LOOKBACK_DAYS,
+            "lookback_days": BANK_INCREMENTAL_LOOKBACK_DAYS,
             "latest_booking_date": latest_booking_date.isoformat(),
             "date_from": date_from.isoformat(),
             "date_to": date_to.isoformat(),
@@ -602,41 +516,8 @@ def _retrieve_params_for_existing_data(*, incremental: bool) -> tuple[dict[str, 
     )
 
 
-def load_nordea_transactions() -> dict[str, Any]:
-    return _apply_overrides(_load_processed())
-
-
-def refresh_nordea_account_balances() -> dict[str, int | str | None]:
-    """Refresh stored account balances without retrieving or changing transactions."""
-    accounts, _ = _load_enablebanking_accounts()
-    processed = _load_processed()
-    processed_accounts = {
-        str(account.get("uid") or ""): account
-        for account in processed.get("accounts") or []
-        if isinstance(account, dict)
-    }
-    updated_count = 0
-    failed_count = 0
-    last_error: str | None = None
-    for account in accounts:
-        account_uid = str(account.get("uid") or "")
-        target = processed_accounts.get(account_uid)
-        if not account_uid or target is None:
-            continue
-        try:
-            balance = _current_booked_balance(_request_json("GET", f"/accounts/{account_uid}/balances"))
-            if balance is not None:
-                target["balance"] = balance
-                updated_count += 1
-            else:
-                failed_count += 1
-        except Exception as exc:
-            failed_count += 1
-            last_error = str(exc)
-    if updated_count:
-        create_backup(_processed_file())
-        _write_json(_processed_file(), processed)
-    return {"updated_count": updated_count, "failed_count": failed_count, "error": last_error}
+def load_bank_transactions() -> dict[str, Any]:
+    return _load_processed()
 
 
 def _local_ledger_taxonomy_entries() -> list[dict[str, Any]]:
@@ -827,94 +708,42 @@ def _build_taxonomy_payload(entries: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def load_nordea_taxonomy() -> dict[str, Any]:
+def load_ledger_taxonomy() -> dict[str, Any]:
     local_transactions_path = get_spiir_local_transactions_file()
     raw_path = get_spiir_raw_export_file()
-    signature = _nordea_taxonomy_cache_signature()
+    signature = _ledger_taxonomy_cache_signature()
 
-    if _NORDEA_TAXONOMY_CACHE.get("key") == signature and _NORDEA_TAXONOMY_CACHE.get("payload") is not None:
-        return deepcopy(_NORDEA_TAXONOMY_CACHE["payload"])
+    if _LEDGER_TAXONOMY_CACHE.get("key") == signature and _LEDGER_TAXONOMY_CACHE.get("payload") is not None:
+        return deepcopy(_LEDGER_TAXONOMY_CACHE["payload"])
 
-    file_cached_payload = _read_nordea_taxonomy_file_cache(signature)
+    file_cached_payload = _read_ledger_taxonomy_file_cache(signature)
     if file_cached_payload is not None:
-        _set_nordea_taxonomy_memory_cache(signature, file_cached_payload)
+        _set_ledger_taxonomy_memory_cache(signature, file_cached_payload)
         return deepcopy(file_cached_payload)
 
     if local_transactions_path.exists():
         payload = _build_taxonomy_payload(_local_ledger_taxonomy_entries())
-        _set_nordea_taxonomy_memory_cache(signature, payload)
-        _write_nordea_taxonomy_file_cache(signature, payload)
+        _set_ledger_taxonomy_memory_cache(signature, payload)
+        _write_ledger_taxonomy_file_cache(signature, payload)
         return deepcopy(payload)
 
     if not raw_path.exists():
         payload = {"categories": [], "hashtags": []}
-        _set_nordea_taxonomy_memory_cache(signature, payload)
-        _write_nordea_taxonomy_file_cache(signature, payload)
+        _set_ledger_taxonomy_memory_cache(signature, payload)
+        _write_ledger_taxonomy_file_cache(signature, payload)
         return deepcopy(payload)
 
     payload = _build_taxonomy_payload(_raw_spiir_taxonomy_entries(_read_json(raw_path)))
-    _set_nordea_taxonomy_memory_cache(signature, payload)
-    _write_nordea_taxonomy_file_cache(signature, payload)
+    _set_ledger_taxonomy_memory_cache(signature, payload)
+    _write_ledger_taxonomy_file_cache(signature, payload)
     return deepcopy(payload)
 
 
-def warm_nordea_taxonomy_cache() -> None:
-    load_nordea_taxonomy()
+def warm_ledger_taxonomy_cache() -> None:
+    load_ledger_taxonomy()
 
 
-def save_nordea_overrides(transaction_ids: list[str], patch: dict[str, Any]) -> dict[str, Any]:
-    if not transaction_ids:
-        raise ValueError("No Nordea transactions selected")
-    payload = _load_overrides()
-    transactions = payload.setdefault("transactions", {})
-    category = _sanitize_category(patch.get("category"))
-    for transaction_id in transaction_ids:
-        current = dict(transactions.get(transaction_id) or {})
-        if "category" in patch:
-            if category is None:
-                current.pop("category", None)
-            else:
-                current["category"] = category
-        if "booking_date" in patch:
-            booking_date = str(patch.get("booking_date") or "").strip()
-            if booking_date:
-                current["booking_date"] = booking_date
-            else:
-                current.pop("booking_date", None)
-        if "note" in patch:
-            current["note"] = str(patch.get("note") or "")
-        if "hashtags" in patch:
-            requested_hashtags = _normalize_hashtags(patch.get("hashtags"))
-            removed_hashtags = [tag for tag in _normalize_hashtags(current.get("hashtags")) if tag not in requested_hashtags]
-            current["note"] = _append_hashtags_to_comment(
-                _remove_hashtags_from_comment(current.get("note"), removed_hashtags),
-                requested_hashtags,
-            )
-            current["hashtags"] = _normalize_hashtags([*_extract_hashtags(current.get("note")), *requested_hashtags])
-        if "append_hashtags" in patch:
-            current["note"] = _append_hashtags_to_comment(current.get("note"), patch.get("append_hashtags"))
-            current["hashtags"] = _normalize_hashtags([*_normalize_hashtags(current.get("hashtags")), *_extract_hashtags(current.get("note"))])
-        if "remove_hashtags" in patch:
-            removed_hashtags = _normalize_hashtags(patch.get("remove_hashtags"))
-            removed_hashtag_set = set(removed_hashtags)
-            current["note"] = _remove_hashtags_from_comment(current.get("note"), removed_hashtags)
-            current["hashtags"] = [
-                tag for tag in _normalize_hashtags([*_normalize_hashtags(current.get("hashtags")), *_extract_hashtags(current.get("note"))])
-                if tag not in removed_hashtag_set
-            ]
-        if any(key in patch for key in ("note", "hashtags", "append_hashtags")):
-            current["hashtags"] = _extract_hashtags(current.get("note"))
-        if "is_extraordinary" in patch:
-            current["is_extraordinary"] = bool(patch.get("is_extraordinary"))
-        if "splits" in patch:
-            current["splits"] = [split for item in patch.get("splits") or [] if (split := _sanitize_split(item)) is not None]
-        transactions[transaction_id] = current
-    payload["updated_at"] = _iso_utc_now()
-    _write_json_with_backup(_overrides_file(), payload)
-    return {"updated_count": len(transaction_ids), "updated_at": payload["updated_at"]}
-
-
-def retrieve_nordea_transactions(
+def retrieve_bank_transactions(
     *,
     incremental: bool = True,
     progress: Callable[[str, int, dict[str, Any] | None], None] | None = None,
@@ -977,19 +806,19 @@ def retrieve_nordea_transactions(
             "transaction_count": len(transactions),
             "transactions": transactions,
         }
-        notify("Gemmer rå Nordea-data", 78, {"account_index": account_index, "transaction_count": len(transactions), "fetch_window": fetch_window})
+        notify("Gemmer rå bankdata", 78, {"account_index": account_index, "transaction_count": len(transactions), "fetch_window": fetch_window})
         out_path = _raw_dir() / f"transactions_{account_uid}_{dt.datetime.now(dt.UTC).strftime('%Y%m%dT%H%M%SZ')}.json"
         _write_json(out_path, raw_payload)
         raw_outputs.append(out_path)
         all_transactions += len(transactions)
-        notify("Normaliserer og fletter Nordea-data", 86, {"transaction_count": len(transactions), "fetch_window": fetch_window})
+        notify("Normaliserer og fletter bankdata", 86, {"transaction_count": len(transactions), "fetch_window": fetch_window})
         _merge_raw_payload(raw_payload)
 
     elapsed_seconds = (dt.datetime.now(dt.UTC) - started).total_seconds()
     processed = _load_processed()
     processed["last_retrieve_duration_seconds"] = round(elapsed_seconds, 3)
     _write_json(_processed_file(), processed)
-    notify("Nordea-hentning færdig", 92, {"retrieved_count": all_transactions, "transaction_count": processed["transaction_count"], "fetch_window": fetch_window})
+    notify("Bankhentning færdig", 92, {"retrieved_count": all_transactions, "transaction_count": processed["transaction_count"], "fetch_window": fetch_window})
     return {
         "retrieved_count": all_transactions,
         "transaction_count": processed["transaction_count"],
@@ -1000,7 +829,7 @@ def retrieve_nordea_transactions(
     }
 
 
-def get_nordea_retrieve_status() -> dict[str, Any]:
+def get_bank_retrieve_status() -> dict[str, Any]:
     status_payload = _read_retrieve_status()
     if status_payload is None:
         return {
@@ -1016,16 +845,16 @@ def get_nordea_retrieve_status() -> dict[str, Any]:
             "sync_result": None,
             "error": None,
         }
-    thread = _NORDEA_RETRIEVE_STATE.get("thread")
+    thread = _BANK_RETRIEVE_STATE.get("thread")
     if status_payload.get("status") in {"queued", "running"} and not isinstance(thread, threading.Thread):
         status_payload["status"] = "failed"
         status_payload["completed_at"] = status_payload.get("completed_at") or _iso_utc_now()
-        status_payload["error"] = status_payload.get("error") or "Nordea-hentning blev afbrudt. Start igen."
+        status_payload["error"] = status_payload.get("error") or "Bankhentningen blev afbrudt. Start igen."
         _write_retrieve_status(status_payload)
     return status_payload
 
 
-def _run_nordea_retrieve_job(job_id: str, *, sync_local_ledger: bool) -> None:
+def _run_bank_retrieve_job(job_id: str, *, sync_local_ledger: bool) -> None:
     status_payload = _read_retrieve_status() or _new_retrieve_status(job_id)
 
     def progress(label: str, progress_value: int, extra: dict[str, Any] | None) -> None:
@@ -1038,15 +867,15 @@ def _run_nordea_retrieve_job(job_id: str, *, sync_local_ledger: bool) -> None:
     try:
         status_payload["status"] = "running"
         _write_retrieve_status(status_payload)
-        result = retrieve_nordea_transactions(incremental=True, progress=progress)
+        result = retrieve_bank_transactions(incremental=True, progress=progress)
         sync_result = None
         if sync_local_ledger:
             progress("Synkroniserer til lokal Spiir-ledger", 96, None)
             from .spiir_local_ledger_service import (
-                apply_nordea_sync_into_spiir_local_ledger,
+                apply_bank_sync_into_local_ledger,
             )
 
-            sync_result = apply_nordea_sync_into_spiir_local_ledger()
+            sync_result = apply_bank_sync_into_local_ledger()
         completed = _read_retrieve_status() or status_payload
         completed["status"] = "succeeded"
         completed["completed_at"] = _iso_utc_now()
@@ -1063,16 +892,16 @@ def _run_nordea_retrieve_job(job_id: str, *, sync_local_ledger: bool) -> None:
         _append_retrieve_event(failed, "Fejlede", int(failed.get("progress") or 0), error=str(exc))
 
 
-def start_nordea_retrieve_job(*, sync_local_ledger: bool = True) -> dict[str, Any]:
-    with _NORDEA_RETRIEVE_LOCK:
-        thread = _NORDEA_RETRIEVE_STATE.get("thread")
+def start_bank_retrieve_job(*, sync_local_ledger: bool = True) -> dict[str, Any]:
+    with _BANK_RETRIEVE_LOCK:
+        thread = _BANK_RETRIEVE_STATE.get("thread")
         current = _read_retrieve_status()
         if isinstance(thread, threading.Thread) and thread.is_alive() and isinstance(current, dict):
             return current
 
         job_id = uuid.uuid4().hex
         status_payload = _write_retrieve_status(_new_retrieve_status(job_id))
-        next_thread = threading.Thread(target=_run_nordea_retrieve_job, kwargs={"job_id": job_id, "sync_local_ledger": sync_local_ledger}, daemon=True)
-        _NORDEA_RETRIEVE_STATE["thread"] = next_thread
+        next_thread = threading.Thread(target=_run_bank_retrieve_job, kwargs={"job_id": job_id, "sync_local_ledger": sync_local_ledger}, daemon=True)
+        _BANK_RETRIEVE_STATE["thread"] = next_thread
         next_thread.start()
         return status_payload

@@ -9,6 +9,13 @@ from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Any
 
+from .autocategorization import (
+    _autocategorize_rows,
+    _is_uncategorized_category,
+    _row_category,
+    _set_row_category,
+    _suggest_categories_from_ledger,
+)
 from .config import (
     get_runtime_settings,
     get_spiir_local_import_runs_file,
@@ -16,16 +23,20 @@ from .config import (
     get_spiir_local_transactions_file,
     get_spiir_raw_export_file,
 )
+from .enable_banking_service import (
+    load_bank_transactions,
+    warm_ledger_taxonomy_cache,
+)
 from .local_ledger_overrides import (
     LOCAL_LEDGER_OVERRIDE_KEYS,
     apply_local_ledger_override,
     load_local_ledger_overrides,
 )
-from .nordea_service import (
-    _sanitize_category,
-    _sanitize_split,
-    load_nordea_transactions,
-    warm_nordea_taxonomy_cache,
+from .local_ledger_overrides import (
+    sanitize_category as _sanitize_category,
+)
+from .local_ledger_overrides import (
+    sanitize_split as _sanitize_split,
 )
 from .spiir_service import (
     RENAME_MAIN_CATEGORY_NAME,
@@ -46,39 +57,6 @@ from .spiir_service import (
 )
 from .storage import create_backup, ensure_runtime_dirs
 
-NON_LETTER_RE = re.compile(r"[^a-zæøå]+")
-STOP_WORDS = {
-    "aps",
-    "as",
-    "betaling",
-    "betalingsservice",
-    "bgs",
-    "bs",
-    "butikk",
-    "dankort",
-    "dkk",
-    "den",
-    "dk",
-    "fra",
-    "gen",
-    "kort",
-    "konto",
-    "koeb",
-    "køb",
-    "mastercard",
-    "mobilepay",
-    "nota",
-    "overfoersel",
-    "overførsel",
-    "pending",
-    "scti",
-    "til",
-    "usd",
-    "visa",
-    "vipps",
-}
-MIN_LEDGER_AUTOCATEGORY_CONFIDENCE = 0.92
-MIN_LEDGER_AUTOCATEGORY_SUPPORT = 2
 LOCAL_LEDGER_FIRST_PAGE_CACHE_LIMIT = 300
 LOCAL_LEDGER_FIRST_PAGE_CACHE_VERSION = 1
 CANONICAL_SPLIT_ROW_KEYS = [
@@ -174,7 +152,7 @@ def _read_local_ledger_first_page_cache(limit: int) -> dict[str, Any] | None:
         return None
     next_response = dict(response)
     next_response["generated_at"] = _iso_utc_now()
-    next_response.update(_nordea_retrieve_meta())
+    next_response.update(_bank_retrieve_meta())
     return next_response
 
 
@@ -212,16 +190,16 @@ def _sort_local_ledger_rows_desc(rows: list[dict[str, Any]]) -> list[dict[str, A
 
 
 def _build_local_ledger_transactions_meta(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    nordea_payload = load_nordea_transactions()
+    bank_payload = load_bank_transactions()
     accounts_by_id: dict[str, dict[str, Any]] = {}
     account_lookup: dict[str, dict[str, str]] = {}
-    for account in nordea_payload.get("accounts") or []:
+    for account in bank_payload.get("accounts") or []:
         if not isinstance(account, dict):
             continue
         account_id = str((account.get("account_id") or {}).get("iban") or "").strip()
         if account_id:
             accounts_by_id[account_id] = account
-    for transaction in nordea_payload.get("transactions") or []:
+    for transaction in bank_payload.get("transactions") or []:
         if not isinstance(transaction, dict):
             continue
         source_id = str(transaction.get("id") or "").strip()
@@ -234,8 +212,8 @@ def _build_local_ledger_transactions_meta(rows: list[dict[str, Any]]) -> dict[st
         if account_id and account_id not in accounts_by_id:
             accounts_by_id[account_id] = {"account_id": {"iban": account_id}, "name": account_name}
     return {
-        "last_retrieved_at": nordea_payload.get("last_retrieved_at"),
-        "last_retrieve_duration_seconds": nordea_payload.get("last_retrieve_duration_seconds"),
+        "last_retrieved_at": bank_payload.get("last_retrieved_at"),
+        "last_retrieve_duration_seconds": bank_payload.get("last_retrieve_duration_seconds"),
         "transaction_count": len(rows),
         "pending_review_count": sum(1 for item in rows if bool(item.get("pending_review"))),
         "accounts": list(accounts_by_id.values()),
@@ -243,11 +221,11 @@ def _build_local_ledger_transactions_meta(rows: list[dict[str, Any]]) -> dict[st
     }
 
 
-def _nordea_retrieve_meta() -> dict[str, Any]:
-    nordea_meta = load_nordea_transactions()
+def _bank_retrieve_meta() -> dict[str, Any]:
+    bank_meta = load_bank_transactions()
     return {
-        "last_retrieved_at": nordea_meta.get("last_retrieved_at"),
-        "last_retrieve_duration_seconds": nordea_meta.get("last_retrieve_duration_seconds"),
+        "last_retrieved_at": bank_meta.get("last_retrieved_at"),
+        "last_retrieve_duration_seconds": bank_meta.get("last_retrieve_duration_seconds"),
     }
 
 
@@ -452,7 +430,7 @@ def _cutover_date() -> str:
     return value
 
 
-def _normalize_nordea_row(now: str, transaction: dict[str, Any], existing: dict[str, Any] | None = None) -> dict[str, Any]:
+def _normalize_bank_row(now: str, transaction: dict[str, Any], existing: dict[str, Any] | None = None) -> dict[str, Any]:
     source_id = str(transaction.get("id") or "").strip()
     original_date = str(transaction.get("original_booking_date") or transaction.get("booking_date") or "").strip() or None
     effective_date = str(transaction.get("custom_booking_date") or transaction.get("booking_date") or original_date or "").strip() or None
@@ -509,309 +487,6 @@ def _normalize_nordea_row(now: str, transaction: dict[str, Any], existing: dict[
             "cutover_date": _cutover_date(),
         },
     }
-
-
-def _normalize_lookup_text(*values: Any) -> str:
-    raw = " ".join(str(value or "") for value in values).lower().replace("&", " og ")
-    tokens = [
-        token
-        for token in NON_LETTER_RE.sub(" ", raw).split()
-        if len(token) >= 3 and token not in STOP_WORDS
-    ]
-    unique_tokens = list(dict.fromkeys(tokens))
-    return " ".join(unique_tokens)
-
-
-def _ledger_lookup_key(row: dict[str, Any]) -> str:
-    return _normalize_lookup_text(
-        row.get("description"),
-        row.get("original_description"),
-        row.get("counterparty"),
-        row.get("comment"),
-    )
-
-
-def _nordea_lookup_key(transaction: dict[str, Any]) -> str:
-    return _normalize_lookup_text(
-        transaction.get("description"),
-        transaction.get("remittance_information"),
-        transaction.get("creditor_name"),
-        transaction.get("debtor_name"),
-    )
-
-
-def _auto_category(main_name: str, category_name: str, category_type: str = "Expense") -> dict[str, Any]:
-    slug = re.sub(r"[^a-z0-9]+", "-", f"{main_name}-{category_name}".lower()).strip("-")
-    return {
-        "categoryType": category_type,
-        "mainCategoryId": f"auto-main:{re.sub(r'[^a-z0-9]+', '-', main_name.lower()).strip('-')}",
-        "mainCategoryName": main_name,
-        "categoryId": f"auto:{slug}",
-        "categoryName": category_name,
-    }
-
-
-AUTO_CATEGORY_RULES: list[tuple[re.Pattern[str], dict[str, Any], float]] = [
-    (re.compile(r"\boverskydende skat\b", re.I), _auto_category("Indkomst", "Overskydende skat", "Income"), 0.99),
-    (re.compile(r"\b(netto|rema\s*1000|365\s|coop|f[øo]tex|kvickly|superbrugsen|sbrugsen|spar\s|aarstiderne|nemlig|lidl|meny|asia bazar)\b", re.I), _auto_category("Husholdning", "Dagligvarer"), 0.98),
-    (re.compile(r"\b(bageri|bageriet|lagkagehuset|hart |br[øo]dkunsten|collective bakery|patisserie|bread station|7-eleven|siciliansk is)\b", re.I), _auto_category("Husholdning", "Kiosk, bager & specialbutikker"), 0.96),
-    (re.compile(r"\b(kantinen|kantine)\b", re.I), _auto_category("Husholdning", "Kantine- & frokostordning"), 0.98),
-    (re.compile(r"\b(rejsekort|dsb|metro|movia|dot billetter)\b", re.I), _auto_category("Transport", "Bus, tog, færge o.l."), 0.99),
-    (re.compile(r"\b(easy\s*park|q-?park|parkman|apcoa)\b", re.I), _auto_category("Transport", "Parkering"), 0.98),
-    (re.compile(r"\b(circle k|shell|ingo|ok benzin|q8|uno-x)\b", re.I), _auto_category("Transport", "Brændstof"), 0.95),
-    (re.compile(r"\b(wolt|just\s*eat|pizz|mcd|burger|sushi|stefanos|tgtg|toogoodtogo)\w*", re.I), _auto_category("Privatforbrug", "Fastfood & takeaway"), 0.96),
-    (re.compile(r"\b(cafe|kaffe|coffee|kaffebar|restaurant|mokkari|impact roasters|minas)\w*", re.I), _auto_category("Privatforbrug", "Bar, cafe & restaurant"), 0.93),
-    (re.compile(r"\b(apotek|dinapoteker|pharmacy)\w*", re.I), _auto_category("Andre leveomkostninger", "Apotek & medicin"), 0.99),
-    (re.compile(r"\b(fysio|fysioterapi|sansefys|kiropraktor|tandl[æa]ge|l[æa]ge|slyngejordemoder)\b", re.I), _auto_category("Andre leveomkostninger", "Behandling & læger"), 0.97),
-    (re.compile(r"\b(sygeforsikringen|danmark)\b", re.I), _auto_category("Andre leveomkostninger", "Sundheds- & sygeforsikring"), 0.97),
-    (re.compile(r"\b(a-kasse|akademikernes|ase l[øo]nmodtager|frie skolers l[æa]rerforening|fagforening)\b", re.I), _auto_category("Andre leveomkostninger", "Fagforening & a-kasse"), 0.98),
-    (re.compile(r"\b(cbb mobil|telmore|yousee|telenor|3 mobil|oister|parknet)\b", re.I), _auto_category("Andre leveomkostninger", "Telefoni & internet"), 0.98),
-    (re.compile(r"\b(netflix|hbo|viaplay|tv2|disney\+|spotify|audible)\b", re.I), _auto_category("Andre leveomkostninger", "TV & streaming"), 0.98),
-    (re.compile(r"\b(openai|chatgpt|microsoft|google one|google photos|apple\.com/bill|dropbox|adobe|kindle)\w*", re.I), _auto_category("Privatforbrug", "Online services & software"), 0.94),
-    (re.compile(r"\b(elgiganten|proshop|avxperten|compumail|power\.dk)\b", re.I), _auto_category("Privatforbrug", "Elektronik & computerudstyr"), 0.95),
-    (re.compile(r"\b(zalando|adidas|h&m|magasin|sport 24|boozt)\b", re.I), _auto_category("Privatforbrug", "Tøj, sko & accessories"), 0.93),
-    (re.compile(r"\b(babysam|reshopper|momkind|pumkins|pumpkins)\b", re.I), _auto_category("Privatforbrug", "Babyudstyr"), 0.94),
-    (re.compile(r"\b(ikea|jem\s*&\s*fix|silvan|jysk)\b", re.I), _auto_category("Bolig", "Ombygning & vedligehold"), 0.93),
-    (re.compile(r"\b(matas|normal kbh|fris[øo]r)\b", re.I), _auto_category("Privatforbrug", "Frisør & personlig pleje"), 0.91),
-    (re.compile(r"\b(zoo|dgi byen|biograf|cinemaxx|tivoli|family zoo)\b", re.I), _auto_category("Privatforbrug", "Biograf, koncerter & forlystelser"), 0.92),
-    (re.compile(r"\b(blomster|interflora|f[øo]dselsdagsgave|afskedsgave|gave til)\b", re.I), _auto_category("Privatforbrug", "Gaver & velgørenhed"), 0.94),
-    (re.compile(r"\b(javid cuts|fris[øo]r)\b", re.I), _auto_category("Privatforbrug", "Frisør & personlig pleje"), 0.96),
-    (re.compile(r"\b(tr[æa]ning|pulscph|fitness)\b", re.I), _auto_category("Privatforbrug", "Sport & fritid"), 0.94),
-    (re.compile(r"\b(garn|bog\s*&\s*id[ée]|panduro)\b", re.I), _auto_category("Privatforbrug", "Hobby & sportsudstyr"), 0.91),
-    (re.compile(r"\b(rente af g[æa]ld|provision af maksimum)\b", re.I), _auto_category("Bolig", "Boliglån & renter"), 0.99),
-    (re.compile(r"\bbankgebyr\b", re.I), _auto_category("Diverse", "Bankgebyrer"), 0.98),
-    (re.compile(r"\b(personskatte|restskat)\b", re.I), _auto_category("Diverse", "Restskat"), 0.98),
-    (re.compile(r"\b(adm\.service fyn|p\.\s*g\.\s*administration)\b", re.I), _auto_category("Bolig", "Ejerforening"), 0.96),
-    (re.compile(r"\bk[øo]benhavns kommune\b", re.I), _auto_category("Andre leveomkostninger", "Institution"), 0.91),
-]
-
-INVESTMENT_TRANSFER_RULES: list[tuple[re.Pattern[str], dict[str, Any]]] = [
-    (re.compile(r"\b(b[øo]rneopsparing|matteo aktier)\b", re.I), _auto_category("Investering & pension", "Børneopsparing", "Investment")),
-    (re.compile(r"\b(pension|ratepension|aldersopsparing)\b", re.I), _auto_category("Investering & pension", "Pension", "Investment")),
-    (re.compile(r"\b(penge til aktier|penge til nordnet(?: skat)?|nordnet|saxo bank)\b", re.I), _auto_category("Investering & pension", "Investering", "Investment")),
-]
-
-CHILD_SAVINGS_PERSON_RE = re.compile(
-    r"\b(matteo pesando myhrmann|chiara pesando myhrmann)\b",
-    re.I,
-)
-
-STRONG_INTERNAL_TRANSFER_RE = re.compile(
-    r"^(overf[øo]rsel|midlertidige penge|penge til f[æa]lles|til budgetkonto|til andelsprioritet|penge bolig(?: jacob)?|penge jacob|f[æa]lles|fie)$",
-    re.I,
-)
-TRANSFER_HINT_RE = re.compile(r"\b(overf[øo]rsel|penge|f[æa]lles|budgetkonto|andelsprioritet|opsparing|aktier)\b", re.I)
-
-
-def _paired_internal_transfer_ids(rows: list[dict[str, Any]]) -> set[str]:
-    by_amount: dict[int, list[dict[str, Any]]] = {}
-    for row in rows:
-        if str(row.get("source") or "") != "nordea":
-            continue
-        amount = float(row.get("amount") or 0)
-        if abs(amount) < 0.005:
-            continue
-        by_amount.setdefault(int(round(abs(amount) * 100)), []).append(row)
-
-    paired: set[str] = set()
-    for candidates in by_amount.values():
-        positives = [row for row in candidates if float(row.get("amount") or 0) > 0]
-        negatives = [row for row in candidates if float(row.get("amount") or 0) < 0]
-        used_positive_ids: set[str] = set()
-        for negative in negatives:
-            try:
-                negative_date = dt.date.fromisoformat(str(negative.get("date")))
-            except ValueError:
-                continue
-            matches: list[tuple[int, dict[str, Any]]] = []
-            for positive in positives:
-                positive_id = str(positive.get("id") or "")
-                if positive_id in used_positive_ids:
-                    continue
-                if positive.get("source_account_id") == negative.get("source_account_id"):
-                    continue
-                try:
-                    positive_date = dt.date.fromisoformat(str(positive.get("date")))
-                except ValueError:
-                    continue
-                day_distance = abs((positive_date - negative_date).days)
-                if day_distance > 2:
-                    continue
-                positive_hint = bool(TRANSFER_HINT_RE.search(str(positive.get("description") or "")))
-                negative_hint = bool(TRANSFER_HINT_RE.search(str(negative.get("description") or "")))
-                if not positive_hint and not negative_hint:
-                    continue
-                score = (int(positive_hint) + int(negative_hint)) * 10 + (2 - day_distance)
-                matches.append((score, positive))
-            if matches:
-                _, positive = max(matches, key=lambda item: item[0])
-                positive_id = str(positive.get("id") or "")
-                used_positive_ids.add(positive_id)
-                paired.add(positive_id)
-                paired.add(str(negative.get("id") or ""))
-    return paired
-
-
-def _autocategorize_rows(rows: list[dict[str, Any]], now: str) -> dict[str, int]:
-    paired_transfer_ids = _paired_internal_transfer_ids(rows)
-    categorized_count = 0
-    transfer_count = 0
-    income_count = 0
-    investment_count = 0
-    child_savings_account_count = 0
-
-    for row in rows:
-        if str(row.get("source") or "") != "nordea" or row.get("splits"):
-            continue
-        description = str(row.get("description") or "").strip()
-        category: dict[str, Any] | None = None
-        confidence = 0.0
-        reason = ""
-
-        if CHILD_SAVINGS_PERSON_RE.search(str(row.get("source_account_name") or "")):
-            child_account_category = _auto_category("Vis ikke", "Børneopsparingskonto")
-            current = _row_category(row)
-            if current != child_account_category or not bool(row.get("is_excluded")):
-                _set_row_category(row, child_account_category, "autocategorization")
-                row["pending_review"] = False
-                row["category_reason"] = "child_savings_account_activity"
-                row["category_confidence"] = 1.0
-                row["updated_at"] = now
-                categorized_count += 1
-                transfer_count += 1
-                child_savings_account_count += 1
-            continue
-
-        search_text = " ".join([
-            description,
-            str(row.get("original_description") or ""),
-            str(row.get("counterparty") or ""),
-        ])
-        named_child_recipient = (
-            float(row.get("amount") or 0) < 0
-            and CHILD_SAVINGS_PERSON_RE.search(str(row.get("counterparty") or "")) is not None
-        )
-        investment_category = (
-            _auto_category("Investering & pension", "Børneopsparing", "Investment")
-            if named_child_recipient
-            else next(
-                (rule_category for pattern, rule_category in INVESTMENT_TRANSFER_RULES if pattern.search(search_text)),
-                None,
-            )
-        )
-        if investment_category is not None and str(row.get("category_source") or "") != "manual":
-            current = _row_category(row)
-            if current != investment_category or bool(row.get("pending_review")):
-                _set_row_category(row, investment_category, "autocategorization")
-                row["pending_review"] = False
-                row["category_reason"] = "investment_transfer"
-                row["category_confidence"] = 0.99
-                row["updated_at"] = now
-                categorized_count += 1
-                investment_count += 1
-            continue
-
-        if not bool(row.get("pending_review")):
-            continue
-
-        if str(row.get("category_type") or "Expense") == "Income":
-            category = _row_category(row)
-            confidence = 0.99
-            reason = "strong_income_description"
-            income_count += 1
-        elif str(row.get("id") or "") in paired_transfer_ids or STRONG_INTERNAL_TRANSFER_RE.fullmatch(description):
-            category = _auto_category("Vis ikke", "Kontooverførsel")
-            confidence = 0.99
-            reason = "own_account_transfer"
-            transfer_count += 1
-        elif _is_uncategorized_category(row.get("main_category_id"), row.get("category_id")):
-            for pattern, rule_category, rule_confidence in AUTO_CATEGORY_RULES:
-                if pattern.search(search_text):
-                    category = rule_category
-                    confidence = rule_confidence
-                    reason = f"merchant_rule:{pattern.pattern}"
-                    break
-
-        if category is None or confidence < 0.9:
-            continue
-        _set_row_category(row, category, "autocategorization")
-        row["pending_review"] = False
-        row["category_reason"] = reason
-        row["category_confidence"] = confidence
-        row["updated_at"] = now
-        categorized_count += 1
-
-    return {
-        "categorized_count": categorized_count,
-        "transfer_count": transfer_count,
-        "income_count": income_count,
-        "investment_count": investment_count,
-        "child_savings_account_count": child_savings_account_count,
-    }
-
-
-def _is_uncategorized_category(main_category_id: Any, category_id: Any) -> bool:
-    return str(main_category_id or "") == str(UNCATEGORIZED_MAIN_CATEGORY_ID) or str(category_id or "") == str(UNCATEGORIZED_CATEGORY_ID)
-
-
-def _ledger_category_payload(row: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "categoryType": str(row.get("category_type") or "Expense"),
-        "mainCategoryId": str(row.get("main_category_id") or UNCATEGORIZED_MAIN_CATEGORY_ID),
-        "mainCategoryName": str(row.get("main_category_name") or UNCATEGORIZED_MAIN_CATEGORY_NAME),
-        "categoryId": str(row.get("category_id") or UNCATEGORIZED_CATEGORY_ID),
-        "categoryName": str(row.get("category_name") or UNCATEGORIZED_CATEGORY_NAME),
-    }
-
-
-def _suggest_categories_from_ledger(
-    *,
-    ledger_rows: list[dict[str, Any]],
-    candidate_transactions: list[dict[str, Any]],
-) -> dict[str, dict[str, Any]]:
-    votes_by_key: dict[str, dict[str, int]] = {}
-    categories_by_key: dict[str, dict[str, Any]] = {}
-
-    for row in ledger_rows:
-        if str(row.get("source") or "") not in {"spiir", "nordea"}:
-            continue
-        if bool(row.get("pending_review")):
-            continue
-        if _is_uncategorized_category(row.get("main_category_id"), row.get("category_id")):
-            continue
-        if row.get("splits"):
-            continue
-        lookup_key = _ledger_lookup_key(row)
-        if not lookup_key:
-            continue
-        category = _ledger_category_payload(row)
-        category_key = f"{category['mainCategoryId']}|{category['categoryId']}"
-        categories_by_key[category_key] = category
-        votes_by_key.setdefault(lookup_key, {})
-        votes_by_key[lookup_key][category_key] = votes_by_key[lookup_key].get(category_key, 0) + 1
-
-    suggestions: dict[str, dict[str, Any]] = {}
-    for transaction in candidate_transactions:
-        if not _is_uncategorized_category(transaction.get("mainCategoryId"), transaction.get("categoryId")):
-            continue
-        lookup_key = _nordea_lookup_key(transaction)
-        if not lookup_key:
-            continue
-        votes = votes_by_key.get(lookup_key) or {}
-        if not votes:
-            continue
-        total = sum(votes.values())
-        top_category_key, top_support = max(votes.items(), key=lambda item: item[1])
-        confidence = top_support / total if total > 0 else 0.0
-        if top_support < MIN_LEDGER_AUTOCATEGORY_SUPPORT or confidence < MIN_LEDGER_AUTOCATEGORY_CONFIDENCE:
-            continue
-        category = categories_by_key.get(top_category_key)
-        if not category:
-            continue
-        transaction_id = str(transaction.get("id") or "").strip()
-        if transaction_id:
-            suggestions[transaction_id] = category
-    return suggestions
 
 
 def _load_raw_entries() -> list[dict[str, Any]]:
@@ -1148,7 +823,7 @@ def _preserve_reviewed_provenance(existing: dict[str, Any], candidate: dict[str,
 
 
 def _preserve_reviewed_local_fields(existing: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
-    """Keep local reviewed/edit fields when refreshing an existing non-pending Nordea row."""
+    """Keep local reviewed/edit fields when refreshing an existing bank row."""
     next_candidate = dict(candidate)
     preserved_keys = [
         "category_type",
@@ -1357,14 +1032,14 @@ def load_spiir_local_ledger_transactions(limit: int | None = None, offset: int =
 def warm_spiir_local_ledger_first_page_cache() -> None:
     _clear_local_ledger_transactions_memory_cache()
     load_spiir_local_ledger_transactions(limit=LOCAL_LEDGER_FIRST_PAGE_CACHE_LIMIT, offset=0)
-    warm_nordea_taxonomy_cache()
+    warm_ledger_taxonomy_cache()
 
 
-def preview_nordea_sync_into_spiir_local_ledger() -> dict[str, Any]:
+def preview_bank_sync_into_local_ledger() -> dict[str, Any]:
     ensure_runtime_dirs()
     now = _iso_utc_now()
     cutover_date = _cutover_date()
-    nordea_transactions = [item for item in load_nordea_transactions().get("transactions", []) if isinstance(item, dict)]
+    bank_transactions = [item for item in load_bank_transactions().get("transactions", []) if isinstance(item, dict)]
     existing_transactions = _load_existing_transactions()
     existing_by_id = {str(item.get("id") or ""): item for item in existing_transactions}
 
@@ -1374,7 +1049,7 @@ def preview_nordea_sync_into_spiir_local_ledger() -> dict[str, Any]:
     skipped_before_cutover_count = 0
     skipped_missing_booking_date_count = 0
 
-    for transaction in nordea_transactions:
+    for transaction in bank_transactions:
         booking_date = str(transaction.get("booking_date") or "").strip()
         if not booking_date:
             skipped_missing_booking_date_count += 1
@@ -1382,7 +1057,7 @@ def preview_nordea_sync_into_spiir_local_ledger() -> dict[str, Any]:
         if booking_date <= cutover_date:
             skipped_before_cutover_count += 1
             continue
-        candidate = _normalize_nordea_row(now=now, transaction=transaction, existing=existing_by_id.get(f"nordea:{transaction.get('id') or ''}"))
+        candidate = _normalize_bank_row(now=now, transaction=transaction, existing=existing_by_id.get(f"nordea:{transaction.get('id') or ''}"))
         preview_rows.append(candidate)
         if candidate["id"] not in existing_by_id:
             would_create_count += 1
@@ -1393,7 +1068,7 @@ def preview_nordea_sync_into_spiir_local_ledger() -> dict[str, Any]:
     return {
         "generated_at": now,
         "cutover_date": cutover_date,
-        "source_row_count": len(nordea_transactions),
+        "source_row_count": len(bank_transactions),
         "eligible_row_count": len(sorted_rows),
         "existing_row_count": len(existing_transactions),
         "would_create_count": would_create_count,
@@ -1414,16 +1089,16 @@ def preview_nordea_sync_into_spiir_local_ledger() -> dict[str, Any]:
     }
 
 
-def apply_nordea_sync_into_spiir_local_ledger() -> dict[str, Any]:
+def apply_bank_sync_into_local_ledger() -> dict[str, Any]:
     ensure_runtime_dirs()
     now = _iso_utc_now()
     cutover_date = _cutover_date()
     existing_transactions = _load_existing_transactions()
     existing_by_id = {str(item.get("id") or ""): item for item in existing_transactions}
-    raw_nordea_transactions = [item for item in load_nordea_transactions().get("transactions", []) if isinstance(item, dict)]
+    raw_bank_transactions = [item for item in load_bank_transactions().get("transactions", []) if isinstance(item, dict)]
     eligible_new_transactions = [
         item
-        for item in raw_nordea_transactions
+        for item in raw_bank_transactions
         if str(item.get("booking_date") or "").strip() > cutover_date
         and f"nordea:{str(item.get('id') or '').strip()}" not in existing_by_id
     ]
@@ -1432,14 +1107,14 @@ def apply_nordea_sync_into_spiir_local_ledger() -> dict[str, Any]:
         candidate_transactions=eligible_new_transactions,
     )
     autocategorized_count = len(category_suggestions_by_transaction_id)
-    nordea_transactions = raw_nordea_transactions
+    bank_transactions = raw_bank_transactions
     merged_by_id = dict(existing_by_id)
     created_count = 0
     updated_count = 0
     skipped_before_cutover_count = 0
     skipped_missing_booking_date_count = 0
 
-    for transaction in nordea_transactions:
+    for transaction in bank_transactions:
         booking_date = str(transaction.get("booking_date") or "").strip()
         if not booking_date:
             skipped_missing_booking_date_count += 1
@@ -1456,7 +1131,7 @@ def apply_nordea_sync_into_spiir_local_ledger() -> dict[str, Any]:
             candidate_source["mainCategoryName"] = suggested_category.get("mainCategoryName")
             candidate_source["categoryId"] = suggested_category.get("categoryId")
             candidate_source["categoryName"] = suggested_category.get("categoryName")
-        candidate = _normalize_nordea_row(now=now, transaction=candidate_source, existing=existing_by_id.get(f"nordea:{transaction.get('id') or ''}"))
+        candidate = _normalize_bank_row(now=now, transaction=candidate_source, existing=existing_by_id.get(f"nordea:{transaction.get('id') or ''}"))
         existing = existing_by_id.get(candidate["id"])
         if existing is None:
             created_count += 1
@@ -1502,7 +1177,7 @@ def apply_nordea_sync_into_spiir_local_ledger() -> dict[str, Any]:
             "type": "nordea_sync",
             "applied_at": now,
             "cutover_date": cutover_date,
-            "source_row_count": len(nordea_transactions),
+            "source_row_count": len(bank_transactions),
             "created_count": created_count,
             "updated_count": updated_count,
             "skipped_before_cutover_count": skipped_before_cutover_count,
@@ -1519,7 +1194,7 @@ def apply_nordea_sync_into_spiir_local_ledger() -> dict[str, Any]:
     return {
         "applied_at": now,
         "cutover_date": cutover_date,
-        "source_row_count": len(nordea_transactions),
+        "source_row_count": len(bank_transactions),
         "created_count": created_count,
         "updated_count": updated_count,
         "autocategorized_count": autocategorized_count,
@@ -1542,28 +1217,6 @@ def _amount_decimal(value: Any) -> Decimal:
 def _amount_total(values: list[Any]) -> Decimal:
     total = sum((_amount_decimal(value) for value in values), Decimal("0.00"))
     return total.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-
-
-def _set_row_category(row: dict[str, Any], category: dict[str, Any], source: str) -> None:
-    row["category_type"] = category.get("categoryType") or "Expense"
-    row["main_category_id"] = category.get("mainCategoryId") or UNCATEGORIZED_MAIN_CATEGORY_ID
-    row["main_category_name"] = category.get("mainCategoryName") or UNCATEGORIZED_MAIN_CATEGORY_NAME
-    row["category_id"] = category.get("categoryId") or UNCATEGORIZED_CATEGORY_ID
-    row["category_name"] = category.get("categoryName") or UNCATEGORIZED_CATEGORY_NAME
-    row["is_excluded"] = row["main_category_name"] in SKIP_MAIN_CATEGORY_NAMES
-    row["category_source"] = source
-    row["category_reason"] = None
-    row["category_confidence"] = None
-
-
-def _row_category(row: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "categoryType": row.get("category_type") or "Expense",
-        "mainCategoryId": row.get("main_category_id") or UNCATEGORIZED_MAIN_CATEGORY_ID,
-        "mainCategoryName": row.get("main_category_name") or UNCATEGORIZED_MAIN_CATEGORY_NAME,
-        "categoryId": row.get("category_id") or UNCATEGORIZED_CATEGORY_ID,
-        "categoryName": row.get("category_name") or UNCATEGORIZED_CATEGORY_NAME,
-    }
 
 
 def _split_category(split: dict[str, Any], fallback_row: dict[str, Any]) -> dict[str, Any]:
