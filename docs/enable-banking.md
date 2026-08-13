@@ -254,5 +254,5 @@ Before sharing a fork, prompt, generated patch, screenshot, or debug log:
 2. Remove `.env` and shell history snippets with secrets.
 3. Remove all PEM/private key files.
 4. Remove `latest_session.json`, raw Enable Banking JSON, and account metadata.
-5. Redact screenshots with account numbers, merchant names, amounts, notes, and receipt lines.
+5. Redact screenshots with account numbers, merchant names, amounts, and notes.
 6. Rotate any Enable Banking key that was exposed in public, chat, CI, or a screenshot.

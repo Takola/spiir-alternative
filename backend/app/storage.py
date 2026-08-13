@@ -6,11 +6,9 @@ from pathlib import Path
 
 from .config import (
     get_data_dir,
-    get_kvitteringer_data_dir,
     get_spiir_local_dir,
     get_spiir_processed_dir,
     get_spiir_raw_dir,
-    get_storebox_source_dir,
     get_transactions_dir,
 )
 
@@ -26,8 +24,6 @@ def ensure_runtime_dirs() -> None:
         get_spiir_raw_dir(),
         get_spiir_processed_dir(),
         get_spiir_local_dir(),
-        get_kvitteringer_data_dir(),
-        get_storebox_source_dir(),
     ]:
         path.mkdir(parents=True, exist_ok=True)
 

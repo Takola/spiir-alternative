@@ -1,15 +1,5 @@
 import { mergeUpdatedTransactions } from "./nordeaState";
 import type {
-    KvitteringerImportResponse,
-    KvitteringerItemClusterDetail,
-    KvitteringerItemClusterSummary,
-    KvitteringerMerchantSummary,
-    KvitteringerOccurrence,
-    KvitteringerOverviewResponse,
-    KvitteringerOverviewSunburstResponse,
-    KvitteringerReceiptDetail,
-    KvitteringerReceiptSummary,
-    KvitteringerStatusResponse,
     NordeaOverridePatch,
     NordeaOverrideResponse,
     NordeaRetrieveJobStatus,
@@ -27,12 +17,6 @@ const API_BASE = window.location.origin.startsWith("http") ? "" : "";
 type CacheSlot<T> = {
     value: T | null;
     promise: Promise<T> | null;
-};
-
-type KvitteringerQuery = {
-    dateFrom?: string;
-    dateTo?: string;
-    merchantKeys?: string[];
 };
 
 const spiirCache = {
@@ -170,27 +154,6 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     return (await response.json()) as T;
 }
 
-function kvitteringerQueryString(query?: KvitteringerQuery & { search?: string; granularity?: "month" | "year" }): string {
-    const params = new URLSearchParams();
-    if (query?.granularity) {
-        params.set("granularity", query.granularity);
-    }
-    if (query?.dateFrom) {
-        params.set("date_from", query.dateFrom);
-    }
-    if (query?.dateTo) {
-        params.set("date_to", query.dateTo);
-    }
-    if (query?.search?.trim()) {
-        params.set("search", query.search.trim());
-    }
-    for (const merchantKey of query?.merchantKeys ?? []) {
-        params.append("merchant_keys", merchantKey);
-    }
-    const serialized = params.toString();
-    return serialized ? `?${serialized}` : "";
-}
-
 export async function getSpiirStatus(): Promise<SpiirStatusResponse> {
     return cachedRequest(spiirCache.status, () => request<SpiirStatusResponse>("/api/spiir/status"));
 }
@@ -309,89 +272,3 @@ export async function saveNordeaOverrides(transactionIds: string[], patch: Norde
     });
 }
 
-export async function getKvitteringerStatus(): Promise<KvitteringerStatusResponse> {
-    return request<KvitteringerStatusResponse>("/api/kvitteringer/status");
-}
-
-export async function importKvitteringerDefault(): Promise<KvitteringerImportResponse> {
-    return request<KvitteringerImportResponse>("/api/kvitteringer/import/default", {
-        method: "POST"
-    });
-}
-
-export async function uploadKvitteringerStoreboxJson(file: File): Promise<KvitteringerImportResponse> {
-    const body = new FormData();
-    body.append("file", file);
-    return request<KvitteringerImportResponse>("/api/kvitteringer/import/upload", {
-        method: "POST",
-        body
-    });
-}
-
-export async function rebuildKvitteringer(): Promise<KvitteringerImportResponse> {
-    return request<KvitteringerImportResponse>("/api/kvitteringer/rebuild", {
-        method: "POST"
-    });
-}
-
-export async function getKvitteringerOverview(
-    granularity: "month" | "year",
-    query?: KvitteringerQuery
-): Promise<KvitteringerOverviewResponse> {
-    return request<KvitteringerOverviewResponse>(`/api/kvitteringer/overview${kvitteringerQueryString({ ...query, granularity })}`);
-}
-
-export async function getKvitteringerOverviewSunburst(
-    granularity: "month" | "year",
-    periods: string[],
-    query?: Pick<KvitteringerQuery, "merchantKeys">
-): Promise<KvitteringerOverviewSunburstResponse> {
-    const params = new URLSearchParams();
-    params.set("granularity", granularity);
-    for (const period of periods) {
-        params.append("periods", period);
-    }
-    for (const merchantKey of query?.merchantKeys ?? []) {
-        params.append("merchant_keys", merchantKey);
-    }
-    return request<KvitteringerOverviewSunburstResponse>(`/api/kvitteringer/overview/sunburst?${params.toString()}`);
-}
-
-export async function getKvitteringerReceipts(query?: KvitteringerQuery): Promise<KvitteringerReceiptSummary[]> {
-    return request<KvitteringerReceiptSummary[]>(`/api/kvitteringer/receipts${kvitteringerQueryString(query)}`);
-}
-
-export async function getKvitteringerReceipt(receiptId: string): Promise<KvitteringerReceiptDetail> {
-    return request<KvitteringerReceiptDetail>(`/api/kvitteringer/receipts/${encodeURIComponent(receiptId)}`);
-}
-
-export async function getKvitteringerMerchants(query?: KvitteringerQuery): Promise<KvitteringerMerchantSummary[]> {
-    return request<KvitteringerMerchantSummary[]>(`/api/kvitteringer/merchants${kvitteringerQueryString(query)}`);
-}
-
-export async function getKvitteringerItems(search = "", query?: KvitteringerQuery): Promise<KvitteringerItemClusterSummary[]> {
-    return request<KvitteringerItemClusterSummary[]>(`/api/kvitteringer/items${kvitteringerQueryString({ ...query, search })}`);
-}
-
-export async function getKvitteringerItem(clusterId: string): Promise<KvitteringerItemClusterDetail> {
-    return request<KvitteringerItemClusterDetail>(`/api/kvitteringer/items/${encodeURIComponent(clusterId)}`);
-}
-
-export async function getKvitteringerItemHistory(clusterId: string, query?: KvitteringerQuery): Promise<KvitteringerOccurrence[]> {
-    return request<KvitteringerOccurrence[]>(`/api/kvitteringer/items/${encodeURIComponent(clusterId)}/history${kvitteringerQueryString(query)}`);
-}
-
-export async function getKvitteringerItemPriceHistory(clusterId: string, query?: KvitteringerQuery): Promise<KvitteringerOccurrence[]> {
-    return request<KvitteringerOccurrence[]>(`/api/kvitteringer/items/${encodeURIComponent(clusterId)}/price-history${kvitteringerQueryString(query)}`);
-}
-
-export async function saveKvitteringerItemCategoryOverride(
-    clusterId: string,
-    categoryKey: string | null
-): Promise<KvitteringerItemClusterDetail> {
-    return request<KvitteringerItemClusterDetail>(`/api/kvitteringer/items/${encodeURIComponent(clusterId)}/category-override`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ category_key: categoryKey })
-    });
-}

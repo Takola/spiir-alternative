@@ -11,7 +11,7 @@ dist/
 *.sqlite3
 .env
 
-# Never commit real banking, receipt, or ledger data.
+# Never commit real banking or ledger data.
 data/*
 !data/.gitkeep
 

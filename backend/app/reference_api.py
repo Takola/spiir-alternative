@@ -1,29 +1,11 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
-from typing import Annotated, Any, Literal
+from datetime import UTC, datetime
+from typing import Annotated, Any
 
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile, status
+from fastapi import FastAPI, HTTPException, Query, status
 
-from .config import get_data_dir, get_kvitteringer_db_path, get_storebox_source_dir
-from .kvitteringer_service import (
-    get_item_cluster,
-    get_kvitteringer_status,
-    get_receipt,
-    import_storebox_folder,
-    item_price_history,
-    item_purchase_history,
-    kvitteringer_outliers,
-    kvitteringer_overview,
-    kvitteringer_overview_sunburst,
-    link_spiir_transaction_to_receipt,
-    list_item_clusters,
-    list_merchants,
-    list_receipts,
-    rebuild_kvitteringer_indexes,
-    replace_storebox_upload,
-    set_item_cluster_category_override,
-)
+from .config import get_data_dir
 from .nordea_service import (
     get_nordea_retrieve_status,
     load_nordea_taxonomy,
@@ -72,8 +54,6 @@ def create_app() -> FastAPI:
             "timestamp_utc": iso_utc(),
             "storage": {
                 "data_dir": str(get_data_dir()),
-                "storebox_source_dir": str(get_storebox_source_dir()),
-                "kvitteringer_db_path": str(get_kvitteringer_db_path()),
             },
         }
 
@@ -219,119 +199,6 @@ def create_app() -> FastAPI:
     @app.get("/api/nordea/retrieve/status")
     def nordea_retrieve_status() -> dict[str, object]:
         return get_nordea_retrieve_status()
-
-    @app.get("/api/kvitteringer/status")
-    def kvitteringer_status() -> dict[str, object]:
-        return get_kvitteringer_status()
-
-    @app.post("/api/kvitteringer/import/default")
-    def kvitteringer_import_default() -> dict[str, object]:
-        try:
-            return import_storebox_folder()
-        except (FileNotFoundError, ValueError) as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-
-    @app.post("/api/kvitteringer/import/upload")
-    async def kvitteringer_import_upload(file: UploadFile = File(...)) -> dict[str, object]:
-        try:
-            return replace_storebox_upload(await file.read(), file.filename)
-        except (FileNotFoundError, ValueError) as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-        finally:
-            await file.close()
-
-    @app.post("/api/kvitteringer/rebuild")
-    def kvitteringer_rebuild() -> dict[str, object]:
-        return rebuild_kvitteringer_indexes()
-
-    @app.get("/api/kvitteringer/overview")
-    def kvitteringer_summary(
-        granularity: Literal["month", "year"] = "month",
-        date_from: date | None = None,
-        date_to: date | None = None,
-        merchant_keys: list[str] | None = Query(default=None),
-    ) -> dict[str, object]:
-        return kvitteringer_overview(granularity=granularity, date_from=date_from, date_to=date_to, merchant_keys=merchant_keys)
-
-    @app.get("/api/kvitteringer/overview/sunburst")
-    def kvitteringer_summary_sunburst(
-        granularity: Literal["month", "year"] = "month",
-        periods: list[str] | None = Query(default=None),
-        merchant_keys: list[str] | None = Query(default=None),
-    ) -> dict[str, object]:
-        return kvitteringer_overview_sunburst(granularity=granularity, periods=periods or [], merchant_keys=merchant_keys)
-
-    @app.get("/api/kvitteringer/receipts")
-    def kvitteringer_receipts(
-        date_from: date | None = None,
-        date_to: date | None = None,
-        merchant_keys: list[str] | None = Query(default=None),
-    ) -> list[dict[str, object]]:
-        return list_receipts(date_from=date_from, date_to=date_to, merchant_keys=merchant_keys)
-
-    @app.get("/api/kvitteringer/receipts/{receipt_id}")
-    def kvitteringer_receipt(receipt_id: str) -> dict[str, object]:
-        payload = get_receipt(receipt_id)
-        if payload is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Receipt not found")
-        return payload
-
-    @app.get("/api/kvitteringer/merchants")
-    def kvitteringer_merchants(
-        date_from: date | None = None,
-        date_to: date | None = None,
-        merchant_keys: list[str] | None = Query(default=None),
-    ) -> list[dict[str, object]]:
-        return list_merchants(date_from=date_from, date_to=date_to, merchant_keys=merchant_keys)
-
-    @app.get("/api/kvitteringer/items")
-    def kvitteringer_items(
-        search: str | None = None,
-        date_from: date | None = None,
-        date_to: date | None = None,
-        merchant_keys: list[str] | None = Query(default=None),
-    ) -> list[dict[str, object]]:
-        return list_item_clusters(search=search, date_from=date_from, date_to=date_to, merchant_keys=merchant_keys)
-
-    @app.get("/api/kvitteringer/items/{cluster_id}")
-    def kvitteringer_item(cluster_id: str) -> dict[str, object]:
-        payload = get_item_cluster(cluster_id)
-        if payload is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item cluster not found")
-        return payload
-
-    @app.post("/api/kvitteringer/items/{cluster_id}/category-override")
-    def kvitteringer_item_category_override(cluster_id: str, payload: dict[str, Any]) -> dict[str, object]:
-        result = set_item_cluster_category_override(cluster_id, payload.get("category_key"))
-        if result is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item cluster not found")
-        return result
-
-    @app.get("/api/kvitteringer/items/{cluster_id}/history")
-    def kvitteringer_item_history_route(
-        cluster_id: str,
-        date_from: date | None = None,
-        date_to: date | None = None,
-        merchant_keys: list[str] | None = Query(default=None),
-    ) -> list[dict[str, object]]:
-        return item_purchase_history(cluster_id, date_from=date_from, date_to=date_to, merchant_keys=merchant_keys)
-
-    @app.get("/api/kvitteringer/items/{cluster_id}/price-history")
-    def kvitteringer_item_price_history_route(
-        cluster_id: str,
-        date_from: date | None = None,
-        date_to: date | None = None,
-        merchant_keys: list[str] | None = Query(default=None),
-    ) -> list[dict[str, object]]:
-        return item_price_history(cluster_id, date_from=date_from, date_to=date_to, merchant_keys=merchant_keys)
-
-    @app.get("/api/kvitteringer/outliers")
-    def kvitteringer_outliers_route() -> dict[str, object]:
-        return kvitteringer_outliers()
-
-    @app.post("/api/kvitteringer/spiir-link")
-    def kvitteringer_spiir_link(payload: dict[str, Any]) -> dict[str, object]:
-        return link_spiir_transaction_to_receipt(payload)
 
     return app
 

@@ -7,7 +7,6 @@ This is a clean reference export of the reusable pieces from a private personal 
 3. attempt to categorize new Nordea rows from repeated historical ledger matches
 4. save local category, note, hashtag, date, split, and review overrides
 5. rebuild a Spiir-style income/expense overview from that local ledger
-6. optionally import Storebox receipt JSON for receipt/item analysis
 
 This is **not** a polished starter app. Treat it as a map and code archive for your own project.
 
@@ -35,20 +34,15 @@ These show the kind of workflows the exported code supports.
 
 ![Category transaction drilldown](screenshots/spiir-category-transactions.png)
 
-### Storebox Receipt Overview
-
-![Storebox receipt overview](screenshots/storebox-receipt-overview.png)
-
 ## What Is Included
 
 - `backend/app/nordea_service.py`: Enable Banking/Nordea transaction fetch, raw storage, normalization, status, and taxonomy helpers.
 - `backend/app/spiir_local_ledger_service.py`: local transaction ledger, override application, sync from Nordea, history-based category suggestions, split migration/repair, and paged transaction responses.
 - `backend/app/spiir_service.py`: Spiir-style processed overview, income/expense series, rebuild state, hashtag helpers, and summary output.
 - `backend/app/local_ledger_overrides.py`: shared override normalization/application rules.
-- `backend/app/kvitteringer_service.py`: Storebox receipt import, SQLite indexes, item clustering, category overrides, and receipt/Spiir linking helpers.
 - `backend/app/reference_api.py`: slim FastAPI route wiring for the exported modules.
 - `backend/app/config.py` and `backend/app/storage.py`: small generic replacements for private app config/storage.
-- `frontend/src/*Dashboard.tsx`: copied React UI surfaces for Nordea/local-ledger review, overview, and receipts.
+- `frontend/src/*Dashboard.tsx`: copied React UI surfaces for local-ledger review and overview.
 - `frontend/src/api.ts`, `frontend/src/types.ts`, and helpers: the API client and shared frontend types used by those dashboards.
 - `scripts/enablebanking_probe.py`: a local helper for listing banks, creating an auth URL, exchanging a consent code, and fetching transactions.
 
@@ -174,21 +168,6 @@ npm run dev
 ```
 
 The copied frontend assumes API routes under `/api/...`. In a real app, run Vite with a proxy to the FastAPI backend or serve the built frontend behind the same origin.
-
-## Storebox / Receipts Setup
-
-If you export Storebox receipt JSON, place it outside git and point `STOREBOX_SOURCE_DIR` at it:
-
-```bash
-export STOREBOX_SOURCE_DIR="$PWD/data/storebox"
-```
-
-Then import or rebuild:
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/kvitteringer/import/default
-curl -X POST http://127.0.0.1:8000/api/kvitteringer/rebuild
-```
 
 ## Known Gaps
 

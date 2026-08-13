@@ -92,22 +92,6 @@ def get_spiir_income_expense_series_cache_file() -> Path:
     return get_spiir_local_dir() / "cache" / "income_expense_series.json"
 
 
-def get_storebox_source_dir() -> Path:
-    return _path_from_env(("STOREBOX_SOURCE_DIR", "SPIIR_ALT_STOREBOX_SOURCE_DIR"), get_data_dir() / "storebox")
-
-
-def get_kvitteringer_data_dir() -> Path:
-    return get_data_dir() / "kvitteringer"
-
-
-def get_kvitteringer_category_overrides_file() -> Path:
-    return get_kvitteringer_data_dir() / "category_overrides.json"
-
-
-def get_kvitteringer_db_path() -> Path:
-    return _path_from_env(("KVITTERINGER_DB_PATH", "SPIIR_ALT_KVITTERINGER_DB_PATH"), get_kvitteringer_data_dir() / "kvitteringer.sqlite3")
-
-
 def get_runtime_settings() -> RuntimeSettings:
     return RuntimeSettings(
         spiir=SpiirRuntimeSettings(
