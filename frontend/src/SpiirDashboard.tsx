@@ -20,7 +20,7 @@ import type {
     SpiirTransaction
 } from "./types";
 
-type SpiirTab = "monthly" | "yearly";
+type SpiirTab = "business" | "monthly" | "yearly";
 type PeriodKind = "month" | "year";
 type ChartLevel = "top" | "main" | "sub";
 
@@ -195,14 +195,10 @@ function compareLocale(left: string | null | undefined, right: string | null | u
     return String(left ?? "").localeCompare(String(right ?? ""), "da");
 }
 
-function absTotalForPeriods(row: SpiirOverviewRow, periods: string[]): number {
-    return Math.abs(rowTotalForPeriods(row, periods));
-}
-
 function filterVisibleHierarchy(rows: SpiirOverviewRow[], periods: string[]): SpiirOverviewRow[] {
     const byKey = new Map(rows.map((row) => [row.key, row]));
     const keep = new Set<string>();
-    const alwaysKeep = new Set(["diff", "income", "expense", "hashtag"]);
+    const alwaysKeep = new Set(["diff", "income", "expense", "investment", "hashtag"]);
 
     const markKeep = (row: SpiirOverviewRow): void => {
         let current: SpiirOverviewRow | undefined = row;
@@ -242,7 +238,8 @@ function sortHierarchyRows(
         ["diff", 0],
         ["income", 1],
         ["expense", 2],
-        ["hashtag", 3]
+        ["investment", 3],
+        ["hashtag", 4]
     ]);
 
     const sortSiblings = (siblings: SpiirOverviewRow[], parentKey: string | null): SpiirOverviewRow[] => {
@@ -267,63 +264,6 @@ function sortHierarchyRows(
     return flatten(null);
 }
 
-function sortOverviewRowsWithTotals(
-    rows: SpiirOverviewRow[],
-    periods: string[],
-    totalSort: boolean
-): SpiirOverviewRow[] {
-    if (!totalSort) {
-        return sortHierarchyRows(rows, periods, (left, right) => compareLocale(left.label, right.label));
-    }
-
-    const filteredRows = filterVisibleHierarchy(rows, periods);
-    const topRows = filteredRows.filter((row) => row.key === "diff" || row.key === "income" || row.key === "expense");
-    const hashtagRow = filteredRows.find((row) => row.key === "hashtag") ?? null;
-    const compareByAbsTotal = (left: SpiirOverviewRow, right: SpiirOverviewRow): number => {
-        const diff = absTotalForPeriods(right, periods) - absTotalForPeriods(left, periods);
-        if (diff !== 0) {
-            return diff;
-        }
-        return compareLocale(left.label, right.label);
-    };
-
-    const incomeChildren = filteredRows
-        .filter((row) => row.parent === "income")
-        .sort(compareByAbsTotal);
-
-    const expenseChildren = filteredRows
-        .filter((row) => row.kind === "sub" && row.level === 2)
-        .map((row) => ({ ...row, parent: "expense" }))
-        .sort(compareByAbsTotal);
-
-    const hashtagChildren = filteredRows
-        .filter((row) => row.parent === "hashtag")
-        .sort(compareByAbsTotal);
-
-    const nextRows: SpiirOverviewRow[] = [];
-    const diffRow = topRows.find((row) => row.key === "diff");
-    const incomeRow = topRows.find((row) => row.key === "income");
-    const expenseRow = topRows.find((row) => row.key === "expense");
-
-    if (diffRow) {
-        nextRows.push(diffRow);
-    }
-    if (incomeRow) {
-        nextRows.push(incomeRow);
-    }
-    nextRows.push(...incomeChildren);
-    if (expenseRow) {
-        nextRows.push(expenseRow);
-    }
-    nextRows.push(...expenseChildren);
-    if (hashtagRow && hashtagChildren.length > 0) {
-        nextRows.push(hashtagRow);
-        nextRows.push(...hashtagChildren);
-    }
-
-    return nextRows;
-}
-
 function buildVisibleRows(rows: SpiirOverviewRow[], expandedRows: Set<string>): SpiirOverviewRow[] {
     const byKey = new Map(rows.map((row) => [row.key, row]));
     return rows.filter((row) => {
@@ -344,7 +284,7 @@ function buildVisibleRows(rows: SpiirOverviewRow[], expandedRows: Set<string>): 
 function buildHeatmapScale(rows: SpiirOverviewRow[], periods: string[]): Map<string, { pos: number; neg: number }> {
     const scale = new Map<string, { pos: number; neg: number }>();
     rows.forEach((row) => {
-        if (row.level !== 2 || !row.parent) {
+        if (!row.parent || (row.kind !== "main" && row.kind !== "sub")) {
             return;
         }
         const current = scale.get(row.parent) ?? { pos: 0, neg: 0 };
@@ -368,7 +308,7 @@ function heatmapCellStyle(
     heatmap: boolean,
     scale: Map<string, { pos: number; neg: number }>
 ): React.CSSProperties | undefined {
-    if (!heatmap || row.level !== 2 || !row.parent || value === 0) {
+    if (!heatmap || !row.parent || (row.kind !== "main" && row.kind !== "sub") || value === 0) {
         return undefined;
     }
     const current = scale.get(row.parent);
@@ -464,7 +404,8 @@ function buildPeriodChartFigure(
     section: SpiirOverviewResponse["monthly"] | SpiirOverviewResponse["yearly"],
     visiblePeriods: string[],
     periodKind: PeriodKind,
-    options: ChartOptions
+    options: ChartOptions,
+    hiddenTopSeries: Set<string> = new Set()
 ): { data: object[]; layout: object } {
     const series = buildPeriodChartSeries(visiblePeriods, section.rows, options.level);
     const accumulate = (values: number[]): number[] => {
@@ -474,6 +415,71 @@ function buildPeriodChartFigure(
             return running;
         });
     };
+
+    if (periodKind === "month" && options.level === "top") {
+        const topTraces = series
+            .filter((entry) => !hiddenTopSeries.has(entry.key))
+            .map((entry) => {
+                const isIncome = entry.key === "income";
+                const isExpense = entry.key === "expense";
+                const color = isIncome ? "#09ab58" : isExpense ? "#e45b55" : "#1687a7";
+                if (entry.key === "diff") {
+                    return {
+                        type: "scatter",
+                        mode: "lines+markers",
+                        name: entry.label,
+                        x: visiblePeriods,
+                        y: entry.y,
+                        line: { color, width: 3 },
+                        marker: { color, size: 7, line: { color: "#f4fbf6", width: 1 } },
+                        hovertemplate: "%{fullData.name} · %{y:,.0f} kr<extra></extra>",
+                    };
+                }
+                return {
+                    type: "bar",
+                    name: entry.label,
+                    x: visiblePeriods,
+                    y: entry.y,
+                    width: entry.key === "diff" ? 0.18 : 0.58,
+                    opacity: entry.key === "diff" ? 0.95 : 0.78,
+                    marker: { color, line: { width: 0 } },
+                    hovertemplate: "%{fullData.name} · %{y:,.0f} kr<extra></extra>",
+                };
+            });
+        return {
+            data: topTraces,
+            layout: {
+                margin: { l: 72, r: 20, t: 24, b: 52 },
+                height: 480,
+                showlegend: false,
+                hovermode: "x unified",
+                hoverlabel: { bgcolor: "#101a14", bordercolor: "#2c8b5e", font: { color: "#f4fbf6", size: 13 } },
+                barmode: "overlay",
+                bargap: 0.22,
+                xaxis: {
+                    type: "category",
+                    automargin: true,
+                    showgrid: false,
+                    fixedrange: true,
+                    showspikes: false,
+                    tickmode: "array",
+                    tickvals: visiblePeriods.length > 10
+                        ? visiblePeriods.filter((_, index) => index % 2 === 0 || index === visiblePeriods.length - 1)
+                        : visiblePeriods,
+                },
+                yaxis: {
+                    title: "DKK",
+                    zeroline: true,
+                    zerolinewidth: 2,
+                    automargin: true,
+                    tickformat: ",.0f",
+                    fixedrange: true,
+                },
+                paper_bgcolor: "rgba(0,0,0,0)",
+                plot_bgcolor: "rgba(0,0,0,0)",
+            },
+        };
+    }
 
     const traces = series.map((entry) => {
         const y = options.cumulative ? accumulate(entry.y) : entry.y;
@@ -538,11 +544,13 @@ function buildPeriodChartFigure(
             showlegend: true,
             legend: { orientation: "h", x: 0, xanchor: "left", y: -0.22, yanchor: "top" },
             hovermode: "x unified",
+            hoverlabel: { bgcolor: "#101a14", bordercolor: "#2c8b5e", font: { color: "#f4fbf6", size: 13 } },
             barmode: options.bars && options.stacked && options.level !== "top" ? "relative" : options.bars ? "group" : undefined,
             bargap: options.bars ? 0.18 : undefined,
             xaxis: {
                 tickangle: 0,
                 automargin: true,
+                showspikes: false,
                 tickmode: "array",
                 tickvals: periodKind === "month" && visiblePeriods.length > 10
                     ? visiblePeriods.filter((_, index) => index % 2 === 0 || index === visiblePeriods.length - 1)
@@ -554,9 +562,55 @@ function buildPeriodChartFigure(
                 tickformat: ",.0f"
             },
             paper_bgcolor: "rgba(0,0,0,0)",
-            plot_bgcolor: "rgba(255,255,255,0.55)"
+            plot_bgcolor: "rgba(0,0,0,0)"
         }
     };
+}
+
+function transactionMatchesOverviewRow(transaction: SpiirTransaction, row: SpiirOverviewRow): boolean {
+    if (row.key === "diff") return ["Income", "Expense"].includes(String(transaction.categoryType ?? ""));
+    if (row.key === "cashflow") return ["Income", "Expense", "Investment"].includes(String(transaction.categoryType ?? ""));
+    if (row.key === "income") return transaction.categoryType === "Income";
+    if (row.key === "expense") return transaction.categoryType === "Expense";
+    if (row.key === "investment") return transaction.categoryType === "Investment";
+    if (row.kind === "main") return transaction.mainCategoryName === row.mainCategoryName;
+    if (row.kind === "sub") return String(transaction.categoryId ?? "") === String(row.categoryId ?? "");
+    return false;
+}
+
+function comparableTransactionTotal(
+    transactions: SpiirTransaction[] | null,
+    row: SpiirOverviewRow | null,
+    periods: string[],
+    cutoffDay: number | null,
+): number | null {
+    if (!transactions || !row || periods.length === 0) return null;
+    const periodSet = new Set(periods);
+    const lastPeriod = periods[periods.length - 1];
+    const cutoffDate = cutoffDay === null ? null : `${lastPeriod}-${String(cutoffDay).padStart(2, "0")}`;
+    return transactions.reduce((sum, transaction) => {
+        const month = String(transaction.yyyymm ?? transaction.ymd?.slice(0, 7) ?? "");
+        if (!periodSet.has(month) || (cutoffDate && month === lastPeriod && transaction.ymd > cutoffDate)) return sum;
+        return transactionMatchesOverviewRow(transaction, row) ? sum + Number(transaction.amount ?? 0) : sum;
+    }, 0);
+}
+
+function comparableExpenseOutflowTotal(
+    transactions: SpiirTransaction[] | null,
+    row: SpiirOverviewRow | null,
+    periods: string[],
+    cutoffDay: number | null,
+): number | null {
+    if (!transactions || !row || periods.length === 0) return null;
+    const periodSet = new Set(periods);
+    const lastPeriod = periods[periods.length - 1];
+    const cutoffDate = cutoffDay === null ? null : `${lastPeriod}-${String(cutoffDay).padStart(2, "0")}`;
+    return transactions.reduce((sum, transaction) => {
+        const month = String(transaction.yyyymm ?? transaction.ymd?.slice(0, 7) ?? "");
+        if (!periodSet.has(month) || (cutoffDate && month === lastPeriod && transaction.ymd > cutoffDate)) return sum;
+        const amount = Number(transaction.amount ?? 0);
+        return transactionMatchesOverviewRow(transaction, row) && amount < 0 ? sum + Math.abs(amount) : sum;
+    }, 0);
 }
 
 function monthEndDate(month: string): string {
@@ -609,7 +663,16 @@ function drilldownFilterFromOverviewRow(row: SpiirOverviewRow, periods: string[]
         return { title: "", ...period, visibilityFilter: "income", categoryFilter: null };
     }
     if (row.kind === "expense") {
-        return { title: "", ...period, visibilityFilter: "expense", categoryFilter: null };
+        return { title: "", ...period, visibilityFilter: "expense", categoryFilter: null, outflowsOnly: true };
+    }
+    if (row.kind === "investment") {
+        return { title: "", ...period, visibilityFilter: "investment", categoryFilter: null };
+    }
+    if (row.kind === "diff") {
+        return { title: "", ...period, visibilityFilter: "operating", categoryFilter: null };
+    }
+    if (row.kind === "cashflow") {
+        return { title: "", ...period, visibilityFilter: "cashflow", categoryFilter: null };
     }
     if (row.kind === "hashtag_item" && row.hashtag) {
         return { title: "", ...period, visibilityFilter: "all", categoryFilter: null, searchText: String(row.hashtag) };
@@ -622,6 +685,7 @@ function drilldownFilterFromOverviewRow(row: SpiirOverviewRow, periods: string[]
         ...period,
         visibilityFilter: categoryFilter ? "category" : row.kind === "expense" ? "consumption" : "all",
         categoryFilter,
+        outflowsOnly: row.kind === "main" || row.kind === "sub" ? true : undefined,
     };
 }
 
@@ -663,7 +727,6 @@ type OverviewSectionProps = {
     onToggle: (key: string) => void;
     onExpandAll: () => void;
     onCollapseAll: () => void;
-    totalSort: boolean;
     heatmap: boolean;
     showPrevTotals: boolean;
     onOpenDrilldown: (row: SpiirOverviewRow, title: string, periods: string[], kind: PeriodKind) => void;
@@ -680,15 +743,14 @@ function OverviewSection({
     onToggle,
     onExpandAll,
     onCollapseAll,
-    totalSort,
     heatmap,
     showPrevTotals,
     onOpenDrilldown,
     onOpenSunburst
 }: OverviewSectionProps) {
     const orderedRows = useMemo(
-        () => sortOverviewRowsWithTotals(section.rows, visiblePeriods, totalSort),
-        [section.rows, totalSort, visiblePeriods]
+        () => sortHierarchyRows(section.rows, visiblePeriods, (left, right) => compareLocale(left.label, right.label)),
+        [section.rows, visiblePeriods]
     );
     const visibleRows = useMemo(() => buildVisibleRows(orderedRows, expandedRows), [expandedRows, orderedRows]);
     const heatmapScale = useMemo(() => buildHeatmapScale(orderedRows, visiblePeriods), [orderedRows, visiblePeriods]);
@@ -746,7 +808,7 @@ function OverviewSection({
                             const prevTotal = rowTotalForPeriods(row, prevPeriods);
                             const delta = total - prevTotal;
                             return (
-                                <tr key={row.key} className={`spiir-row spiir-level-${row.level}`}>
+                                <tr key={row.key} className={`spiir-row spiir-level-${row.level}${row.key === "investment" || row.parent === "investment" ? " spiir-investment-row" : ""}`}>
                                     <td className="spiir-sticky spiir-label-cell">
                                         <div className="spiir-label-wrap">
                                             {expandable ? (
@@ -821,6 +883,581 @@ function OverviewSection({
     );
 }
 
+function businessDelta(current: number, previous: number): number | null {
+    if (previous === 0) {
+        return null;
+    }
+    return ((current - previous) / Math.abs(previous)) * 100;
+}
+
+function formatBusinessValue(value: number): string {
+    return `${new Intl.NumberFormat("da-DK", { maximumFractionDigits: 0 }).format(value)} kr`;
+}
+
+function formatBusinessDelta(value: number | null): string {
+    if (value === null || !Number.isFinite(value)) {
+        return "No prior baseline";
+    }
+    return `${value >= 0 ? "+" : ""}${new Intl.NumberFormat("da-DK", { maximumFractionDigits: 1 }).format(value)}% vs prior year`;
+}
+
+type SpendingSource = {
+    key: string;
+    label: string;
+    searchText: string;
+    category: string;
+    spend: number;
+    previousSpend: number;
+    count: number;
+    monthCount: number;
+    average: number;
+    share: number;
+    cadence: "Recurring" | "Frequent" | "Occasional";
+    change: number | null;
+};
+
+const SPENDING_SOURCE_ALIASES: Array<[RegExp, string, string]> = [
+    [/p\.\s*g\.\s*administration/i, "P.G. Administration", "P. G. ADMINISTRATION"],
+    [/københavns kommune/i, "Københavns Kommune", "Københavns Kommune"],
+    [/akademikernes a-kasse/i, "Akademikernes A-kasse", "AKADEMIKERNES A-KASSE"],
+    [/frie skolers lærerforening/i, "Frie Skolers Lærerforening", "FRIE SKOLERS LÆRERFORENING"],
+    [/adm\.service fyn/i, "ADM. Service Fyn", "ADM.SERVICE FYN"],
+    [/scalepoint/i, "Scalepoint", "Scalepoint"],
+    [/babysam/i, "BabySam", "babysam"],
+    [/rejsekort/i, "Rejsekort", "Rejsekort"],
+    [/sygeforsikringen/i, "Sygeforsikringen Danmark", "Sygeforsikringen"],
+    [/sansefys/i, "Sansefys", "Sansefys"],
+    [/slyngejordemoder/i, "Slyngejordemoder", "Slyngejordemoder"],
+    [/wolt/i, "Wolt", "Wolt"],
+    [/aarstiderne/i, "Aarstiderne", "AARSTIDERNE"],
+    [/netto/i, "Netto", "Netto"],
+    [/rema\s*1000/i, "Rema 1000", "REMA1000"],
+    [/føtex/i, "Føtex", "føtex"],
+    [/coop/i, "Coop", "Coop"],
+    [/rente af gæld/i, "Mortgage interest", "Rente af gæld"],
+    [/provision af maksimum/i, "Mortgage credit fee", "Provision af maksimum"],
+];
+
+function spendingSourceIdentity(transaction: SpiirTransaction): { key: string; label: string; searchText: string } {
+    const original = String(transaction.description ?? "").trim();
+    const normalizedOriginal = original.normalize("NFKC");
+    for (const [pattern, label, searchText] of SPENDING_SOURCE_ALIASES) {
+        if (pattern.test(normalizedOriginal)) return { key: label.toLocaleLowerCase("da"), label, searchText };
+    }
+    let label = normalizedOriginal
+        .replace(/^(?:kontaktløs\s+)?(?:visa\/)?dankort(?:-køb)?\s+/i, "")
+        .replace(/^betalingsservice\s+/i, "")
+        .replace(/^mobilepay(?:\s+køb)?\s+(?:mobilepay\s+)?/i, "")
+        .replace(/^mobilepay:\s*(?:mobilepay\s+)?/i, "")
+        .replace(/\s+(?:aftalenr\.|nota(?:nr\.|\s+nr\.)?|notanr)\s+.*$/i, "")
+        .replace(/\s{2,}/g, " ")
+        .trim();
+    if (!label || label.length < 2 || /^(?:advis|kortkøb|køb)$/i.test(label)) {
+        label = String(transaction.categoryName ?? transaction.mainCategoryName ?? "Other spending");
+    }
+    if (label.length > 42) label = `${label.slice(0, 39).trim()}…`;
+    const searchText = label.replace(/…$/, "").split(/[,/]/)[0].trim();
+    return { key: `${String(transaction.mainCategoryName ?? "Diverse").toLocaleLowerCase("da")}|${label.toLocaleLowerCase("da")}`, label, searchText };
+}
+
+function buildSpendingSources(
+    transactions: SpiirTransaction[] | null,
+    periods: string[],
+    previousPeriods: string[],
+    categoryFilter: string,
+): SpendingSource[] {
+    if (!transactions || periods.length === 0) return [];
+    const currentSet = new Set(periods);
+    const previousSet = new Set(previousPeriods);
+    const groups = new Map<string, Omit<SpendingSource, "average" | "share" | "cadence" | "change"> & { months: Set<string> }>();
+    for (const transaction of transactions) {
+        if (transaction.categoryType !== "Expense" || Number(transaction.amount ?? 0) >= 0) continue;
+        const category = String(transaction.mainCategoryName ?? "Diverse");
+        if (category === "Vis ikke" || (categoryFilter && category !== categoryFilter)) continue;
+        const month = String(transaction.yyyymm ?? transaction.ymd?.slice(0, 7) ?? "");
+        if (!currentSet.has(month) && !previousSet.has(month)) continue;
+        const identity = spendingSourceIdentity(transaction);
+        const groupKey = `${category}|${identity.key}`;
+        const group = groups.get(groupKey) ?? {
+            key: groupKey,
+            label: identity.label,
+            searchText: identity.searchText,
+            category,
+            spend: 0,
+            previousSpend: 0,
+            count: 0,
+            monthCount: 0,
+            months: new Set<string>(),
+        };
+        if (currentSet.has(month)) {
+            group.spend += Math.abs(Number(transaction.amount ?? 0));
+            group.count += 1;
+            group.months.add(month);
+        } else {
+            group.previousSpend += Math.abs(Number(transaction.amount ?? 0));
+        }
+        groups.set(groupKey, group);
+    }
+    const totalSpend = [...groups.values()].reduce((sum, group) => sum + group.spend, 0);
+    return [...groups.values()]
+        .filter((group) => group.spend > 0)
+        .map((group) => {
+            const monthCount = group.months.size;
+            const coverage = monthCount / Math.max(periods.length, 1);
+            const cadence: SpendingSource["cadence"] = coverage >= 0.55 && monthCount >= 3 ? "Recurring" : group.count / Math.max(periods.length, 1) >= 2 ? "Frequent" : "Occasional";
+            const { months: _months, ...source } = group;
+            return {
+                ...source,
+                monthCount,
+                average: group.spend / Math.max(group.count, 1),
+                share: totalSpend ? (group.spend / totalSpend) * 100 : 0,
+                cadence,
+                change: businessDelta(group.spend, group.previousSpend),
+            };
+        })
+        .sort((left, right) => right.spend - left.spend);
+}
+
+function BusinessReview({
+    section,
+    transactions,
+    onOpenDrilldown,
+    onOpenSpendingSource,
+}: {
+    section: SpiirOverviewResponse["monthly"];
+    transactions: SpiirTransaction[] | null;
+    onOpenDrilldown: (row: SpiirOverviewRow, title: string, periods: string[]) => void;
+    onOpenSpendingSource: (title: string, searchText: string, periods: string[]) => void;
+}) {
+    const years = useMemo(() => [...new Set(section.periods.map((period) => period.slice(0, 4)))].sort(), [section.periods]);
+    const [selectedYear, setSelectedYear] = useState("");
+    const [summaryMode, setSummaryMode] = useState<"total" | "average">("total");
+    const [spendingCategory, setSpendingCategory] = useState("");
+    const [showAllSpendingSources, setShowAllSpendingSources] = useState(false);
+    const [spendingTreemapFullscreen, setSpendingTreemapFullscreen] = useState(false);
+
+    useEffect(() => {
+        if (!selectedYear || !years.includes(selectedYear)) {
+            setSelectedYear(years[years.length - 1] ?? "");
+        }
+    }, [selectedYear, years]);
+
+    useEffect(() => {
+        if (!spendingTreemapFullscreen) return undefined;
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key === "Escape") setSpendingTreemapFullscreen(false);
+        };
+        document.body.classList.add("spending-treemap-open");
+        window.addEventListener("keydown", handleKeyDown);
+        return () => {
+            document.body.classList.remove("spending-treemap-open");
+            window.removeEventListener("keydown", handleKeyDown);
+        };
+    }, [spendingTreemapFullscreen]);
+
+    const yearIndex = years.indexOf(selectedYear);
+    const compareYear = yearIndex > 0 ? years[yearIndex - 1] : "";
+    const currentPeriods = section.periods.filter((period) => period.startsWith(`${selectedYear}-`));
+    const monthCount = currentPeriods.length;
+    const previousPeriods = section.periods.filter((period) => period.startsWith(`${compareYear}-`)).slice(0, monthCount);
+    const today = new Date();
+    const isLiveYear = selectedYear === String(today.getFullYear());
+    const comparableCutoffDay = isLiveYear ? today.getDate() : null;
+    const incomeRow = section.rows.find((row) => row.key === "income") ?? null;
+    const expenseRow = section.rows.find((row) => row.key === "expense") ?? null;
+    const investmentRow = section.rows.find((row) => row.key === "investment") ?? null;
+    const diffRow = section.rows.find((row) => row.key === "diff") ?? null;
+    const cashFlowRow = diffRow ? { ...diffRow, key: "cashflow", kind: "cashflow", label: "Cash after investing" } : null;
+    const liveMonth = `${selectedYear}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+    const latestCurrentPeriod = currentPeriods[currentPeriods.length - 1] ?? "";
+    const latestMonthIncome = comparableTransactionTotal(transactions, incomeRow, [latestCurrentPeriod], null)
+        ?? Number(incomeRow?.values[latestCurrentPeriod] ?? 0);
+    const holdUnpaidLiveMonth = isLiveYear && latestCurrentPeriod === liveMonth && latestMonthIncome <= 0;
+    const reportingCurrentPeriods = holdUnpaidLiveMonth ? currentPeriods.slice(0, -1) : currentPeriods;
+    const reportingPreviousPeriods = previousPeriods.slice(0, reportingCurrentPeriods.length);
+
+    const currentIncome = comparableTransactionTotal(transactions, incomeRow, reportingCurrentPeriods, null) ?? (incomeRow ? rowTotalForPeriods(incomeRow, reportingCurrentPeriods) : 0);
+    const previousIncome = comparableTransactionTotal(transactions, incomeRow, reportingPreviousPeriods, null) ?? (incomeRow ? rowTotalForPeriods(incomeRow, reportingPreviousPeriods) : 0);
+    const currentExpense = comparableExpenseOutflowTotal(transactions, expenseRow, reportingCurrentPeriods, null) ?? Math.abs(expenseRow ? rowTotalForPeriods(expenseRow, reportingCurrentPeriods) : 0);
+    const previousExpense = comparableExpenseOutflowTotal(transactions, expenseRow, reportingPreviousPeriods, null) ?? Math.abs(expenseRow ? rowTotalForPeriods(expenseRow, reportingPreviousPeriods) : 0);
+    const currentInvestment = Math.abs(comparableTransactionTotal(transactions, investmentRow, reportingCurrentPeriods, null) ?? (investmentRow ? rowTotalForPeriods(investmentRow, reportingCurrentPeriods) : 0));
+    const previousInvestment = Math.abs(comparableTransactionTotal(transactions, investmentRow, reportingPreviousPeriods, null) ?? (investmentRow ? rowTotalForPeriods(investmentRow, reportingPreviousPeriods) : 0));
+    const currentOperatingSurplus = currentIncome - currentExpense;
+    const previousOperatingSurplus = previousIncome - previousExpense;
+    const currentNet = currentOperatingSurplus - currentInvestment;
+    const previousNet = previousOperatingSurplus - previousInvestment;
+    const savingsRate = currentIncome ? (currentOperatingSurplus / currentIncome) * 100 : 0;
+    const previousSavingsRate = previousIncome ? (previousOperatingSurplus / previousIncome) * 100 : 0;
+    const monthLabels = currentPeriods.map((period) => new Intl.DateTimeFormat("da-DK", { month: "short" }).format(new Date(`${period}-01T00:00:00`)));
+    const comparableMonthValue = (row: SpiirOverviewRow | null, period: string, absolute = false, outflowsOnly = false): number => {
+        const isLastComparedMonth = period === currentPeriods[currentPeriods.length - 1] || period === previousPeriods[previousPeriods.length - 1];
+        const total = (outflowsOnly
+            ? comparableExpenseOutflowTotal(transactions, row, [period], isLastComparedMonth ? comparableCutoffDay : null)
+            : comparableTransactionTotal(transactions, row, [period], isLastComparedMonth ? comparableCutoffDay : null))
+            ?? Number(row?.values[period] ?? 0);
+        return absolute ? Math.abs(total) : total;
+    };
+    const currentIncomeByMonth = currentPeriods.map((period) => comparableMonthValue(incomeRow, period));
+    const previousIncomeByMonth = previousPeriods.map((period) => comparableMonthValue(incomeRow, period));
+    const currentExpenseByMonth = currentPeriods.map((period) => comparableMonthValue(expenseRow, period, true, true));
+    const previousExpenseByMonth = previousPeriods.map((period) => comparableMonthValue(expenseRow, period, true, true));
+    const currentInvestmentByMonth = currentPeriods.map((period) => comparableMonthValue(investmentRow, period, true));
+    const previousInvestmentByMonth = previousPeriods.map((period) => comparableMonthValue(investmentRow, period, true));
+    const cumulative = (values: number[]) => {
+        let total = 0;
+        return values.map((value) => (total += value));
+    };
+    const currentNetByMonth = currentIncomeByMonth.map((income, index) => income - currentExpenseByMonth[index] - currentInvestmentByMonth[index]);
+    const previousNetByMonth = previousIncomeByMonth.map((income, index) => income - previousExpenseByMonth[index] - previousInvestmentByMonth[index]);
+
+    const incomeCategoryRows = section.rows
+        .filter((row) => row.kind === "main" && row.parent === "income")
+        .map((row) => ({
+            row,
+            current: comparableTransactionTotal(transactions, row, reportingCurrentPeriods, null) ?? rowTotalForPeriods(row, reportingCurrentPeriods),
+        }))
+        .filter((item) => item.current > 0)
+        .sort((left, right) => right.current - left.current);
+    const expenseCategoryRows = section.rows
+        .filter((row) => row.kind === "main" && row.parent === "expense")
+        .map((row) => ({
+            row,
+            current: comparableExpenseOutflowTotal(transactions, row, reportingCurrentPeriods, null) ?? Math.abs(rowTotalForPeriods(row, reportingCurrentPeriods)),
+            previous: comparableExpenseOutflowTotal(transactions, row, reportingPreviousPeriods, null) ?? Math.abs(rowTotalForPeriods(row, reportingPreviousPeriods)),
+        }))
+        .filter((item) => item.current > 0 || item.previous > 0)
+        .sort((left, right) => right.current - left.current);
+    const categoryRows = expenseCategoryRows.slice(0, 8);
+
+    const sharedLayout = {
+        paper_bgcolor: "rgba(0,0,0,0)",
+        plot_bgcolor: "rgba(0,0,0,0)",
+        font: { family: "Inter, Avenir Next, Segoe UI, sans-serif", color: "#607069", size: 12 },
+        margin: { l: 68, r: 24, t: 32, b: 52 },
+        hovermode: "x unified" as const,
+        showlegend: true,
+        legend: { orientation: "h", x: 0, y: 1.16, font: { size: 11 } },
+        hoverlabel: { bgcolor: "#101a14", bordercolor: "#2c8b5e", font: { color: "#f4fbf6", size: 13 } },
+    };
+
+    const modernXAxis = { showgrid: false, zeroline: false, showspikes: false, tickfont: { color: "#718078" }, fixedrange: true };
+    const modernYAxis = { title: "DKK", tickformat: ",.0f", gridcolor: "#e5ece8", gridwidth: 1, zeroline: true, zerolinecolor: "#cbd7d0", fixedrange: true };
+    const currentMonthDivisor = Math.max(reportingCurrentPeriods.length, 1);
+    const previousMonthDivisor = Math.max(reportingPreviousPeriods.length, 1);
+    const summaryValue = (value: number, previous = false) => summaryMode === "average" ? value / (previous ? previousMonthDivisor : currentMonthDivisor) : value;
+    const summarySuffix = summaryMode === "average" ? "Monthly average" : "Year to date";
+    const waterfallSteps = [
+        ...(incomeCategoryRows.length
+            ? incomeCategoryRows.map((item) => ({ label: item.row.label, value: item.current, key: item.row.key, row: item.row }))
+            : [{ label: "Income", value: currentIncome, key: "income", row: incomeRow }]),
+        ...expenseCategoryRows
+            .filter((item) => item.current > 0)
+            .map((item) => ({ label: item.row.label, value: -item.current, key: item.row.key, row: item.row })),
+        { label: "Operating surplus", value: 0, key: "diff", row: diffRow },
+        { label: "Investment & pension", value: -currentInvestment, key: "investment", row: investmentRow },
+        { label: "Cash after investing", value: 0, key: "cashflow", row: cashFlowRow },
+    ];
+    const waterfallText = waterfallSteps
+        .map((step) => step.value === 0 && (step.key === "diff" || step.key === "cashflow")
+            ? step.key === "diff" ? currentOperatingSurplus : currentNet
+            : step.value)
+        .map((value) => new Intl.NumberFormat("da-DK", { maximumFractionDigits: 0 }).format(value));
+    const spendingSources = useMemo(
+        () => buildSpendingSources(transactions, reportingCurrentPeriods, reportingPreviousPeriods, spendingCategory),
+        [reportingCurrentPeriods.join("|"), reportingPreviousPeriods.join("|"), spendingCategory, transactions],
+    );
+    const spendingSourceRows = showAllSpendingSources ? spendingSources : spendingSources.slice(0, 12);
+    const spendingCategories = [...new Set(buildSpendingSources(transactions, reportingCurrentPeriods, reportingPreviousPeriods, "").map((item) => item.category))].sort((left, right) => left.localeCompare(right, "da"));
+    const spendingTreemapSources = spendingSources;
+    const spendingTreemapCategories = [...new Set(spendingTreemapSources.map((item) => item.category))];
+    const spendingTreemapCategoryTotals = new Map(spendingTreemapCategories.map((category) => [
+        category,
+        spendingTreemapSources.filter((item) => item.category === category).reduce((sum, item) => sum + item.spend, 0),
+    ]));
+    const spendingPalette = ["#1687a7", "#09ab58", "#e09c38", "#9b70c9", "#e45b55", "#3c8a75", "#c97955", "#6f7fc4"];
+    const spendingCategoryColor = new Map(spendingTreemapCategories.map((category, index) => [category, spendingPalette[index % spendingPalette.length]]));
+
+    if (!selectedYear || reportingCurrentPeriods.length === 0) {
+        return <section className="panel business-review"><p>No comparable yearly data is available yet.</p></section>;
+    }
+
+    return (
+        <section className="business-review">
+            <header className="business-review-header">
+                <div>
+                    <p className="eyebrow">Management review</p>
+                    <h1>{selectedYear} year-to-date</h1>
+                    <p>{holdUnpaidLiveMonth ? `${new Intl.DateTimeFormat("en", { month: "long" }).format(today)} is held out until income arrives; ` : ""}compared through the same completed months in {compareYear || "the prior period"}. Click any KPI, chart, or category to inspect transactions.</p>
+                </div>
+                <div className="business-review-controls">
+                    <div className="business-summary-toggle" role="group" aria-label="Summary value mode">
+                        <button type="button" className={summaryMode === "total" ? "active" : ""} onClick={() => setSummaryMode("total")}>Total</button>
+                        <button type="button" className={summaryMode === "average" ? "active" : ""} onClick={() => setSummaryMode("average")}>Avg/month</button>
+                    </div>
+                    <label className="business-year-select">
+                        <span>Reporting year</span>
+                        <select value={selectedYear} onChange={(event) => setSelectedYear(event.target.value)}>
+                            {years.map((year) => <option key={year} value={year}>{year}</option>)}
+                        </select>
+                    </label>
+                </div>
+            </header>
+
+            <div className="business-kpi-grid">
+                <button type="button" className="business-kpi" onClick={() => incomeRow && onOpenDrilldown(incomeRow, `Income · ${selectedYear} YTD`, reportingCurrentPeriods)}>
+                    <span>Income</span><strong>{formatBusinessValue(summaryValue(currentIncome))}</strong><small>{summarySuffix} · {formatBusinessDelta(businessDelta(currentIncome, previousIncome))}</small>
+                </button>
+                <button type="button" className="business-kpi" onClick={() => expenseRow && onOpenDrilldown(expenseRow, `Expenses · ${selectedYear} YTD`, reportingCurrentPeriods)}>
+                    <span>Expenses</span><strong>{formatBusinessValue(summaryValue(currentExpense))}</strong><small>{summarySuffix} · {formatBusinessDelta(businessDelta(currentExpense, previousExpense))}</small>
+                </button>
+                <button type="button" className="business-kpi business-kpi-investment" onClick={() => investmentRow && onOpenDrilldown(investmentRow, `Investment & pension · ${selectedYear} YTD`, reportingCurrentPeriods)}>
+                    <span>Investment &amp; pension</span><strong>{formatBusinessValue(summaryValue(currentInvestment))}</strong><small>{summarySuffix} · {formatBusinessDelta(businessDelta(currentInvestment, previousInvestment))}</small>
+                </button>
+                <button type="button" className="business-kpi" onClick={() => cashFlowRow && onOpenDrilldown(cashFlowRow, `Cash after investing · ${selectedYear} YTD`, reportingCurrentPeriods)}>
+                    <span>Cash after investing</span><strong>{formatBusinessValue(summaryValue(currentNet))}</strong><small>{summarySuffix} · {formatBusinessDelta(businessDelta(currentNet, previousNet))}</small>
+                </button>
+                <div className="business-kpi">
+                    <span>Savings rate</span><strong>{new Intl.NumberFormat("da-DK", { maximumFractionDigits: 1 }).format(savingsRate)}%</strong><small>{savingsRate - previousSavingsRate >= 0 ? "+" : ""}{new Intl.NumberFormat("da-DK", { maximumFractionDigits: 1 }).format(savingsRate - previousSavingsRate)} pp vs prior year</small>
+                </div>
+            </div>
+
+            <div className="business-chart-grid">
+                <section className="panel business-chart-panel business-chart-wide business-chart-clickable">
+                    <div className="business-chart-heading"><div><h2>Monthly operating picture</h2><span>Income and gross spending · click any bar to inspect the month</span></div><button type="button" className="business-chart-drill-button" onClick={() => expenseRow && onOpenDrilldown(expenseRow, `Expenses · ${selectedYear} YTD`, reportingCurrentPeriods)}>View expenses</button></div>
+                    <Plot
+                        data={[
+                            { type: "bar", name: `${selectedYear} income`, x: monthLabels, y: currentIncomeByMonth, marker: { color: "#09ab58", line: { width: 0 } }, customdata: currentPeriods, hovertemplate: "%{y:,.0f} kr<extra></extra>" },
+                            { type: "bar", name: `${compareYear} income`, x: monthLabels, y: previousIncomeByMonth, marker: { color: "#a8ddc0", line: { width: 0 } }, customdata: previousPeriods, hovertemplate: "%{y:,.0f} kr<extra></extra>" },
+                            { type: "bar", name: `${selectedYear} expenses`, x: monthLabels, y: currentExpenseByMonth, marker: { color: "#e45b55", line: { width: 0 } }, customdata: currentPeriods, hovertemplate: "%{y:,.0f} kr<extra></extra>" },
+                            { type: "bar", name: `${compareYear} expenses`, x: monthLabels, y: previousExpenseByMonth, marker: { color: "#f2bbb7", line: { width: 0 } }, customdata: previousPeriods, hovertemplate: "%{y:,.0f} kr<extra></extra>" },
+                        ] as never[]}
+                        layout={{ ...sharedLayout, barmode: "group", bargap: 0.2, bargroupgap: 0.06, height: 390, xaxis: modernXAxis, yaxis: modernYAxis } as never}
+                        config={{ displayModeBar: false, responsive: true }} useResizeHandler className="business-plot"
+                        onClick={(event) => {
+                            const point = event.points[0];
+                            const period = String(point?.customdata ?? "");
+                            const row = String(point?.data?.name ?? "").includes("income") ? incomeRow : expenseRow;
+                            if (period && row) onOpenDrilldown(row, `${row.label} · ${period}`, [period]);
+                        }}
+                    />
+                </section>
+
+                <section className="panel business-chart-panel business-chart-clickable">
+                    <div className="business-chart-heading"><div><h2>Investment &amp; pension</h2><span>Capital moved out of spending accounts · click to inspect</span></div><button type="button" className="business-chart-drill-button" onClick={() => investmentRow && onOpenDrilldown(investmentRow, `Investment & pension · ${selectedYear} YTD`, reportingCurrentPeriods)}>Drill down YTD</button></div>
+                    <Plot
+                        data={[
+                            { type: "bar", name: selectedYear, x: monthLabels, y: currentInvestmentByMonth, marker: { color: "#ec6f9d" }, customdata: currentPeriods, hovertemplate: "%{y:,.0f} kr<extra></extra>" },
+                            { type: "scatter", mode: "lines+markers", name: compareYear, x: monthLabels, y: previousInvestmentByMonth, line: { color: "#f3afc6", width: 2, dash: "dot" }, marker: { size: 6, color: "#f3afc6" }, customdata: previousPeriods, hovertemplate: "%{y:,.0f} kr<extra></extra>" },
+                        ] as never[]}
+                        layout={{ ...sharedLayout, height: 360, xaxis: modernXAxis, yaxis: modernYAxis } as never}
+                        config={{ displayModeBar: false, responsive: true }} useResizeHandler className="business-plot"
+                        onClick={(event) => {
+                            const period = String(event.points[0]?.customdata ?? "");
+                            if (period && investmentRow) onOpenDrilldown(investmentRow, `Investment & pension · ${period}`, [period]);
+                        }}
+                    />
+                </section>
+
+                <section className="panel business-chart-panel business-chart-clickable">
+                    <div className="business-chart-heading"><div><h2>Cumulative net cash flow</h2><span>How the year builds month by month · click to inspect</span></div><button type="button" className="business-chart-drill-button" onClick={() => cashFlowRow && onOpenDrilldown(cashFlowRow, `Cash after investing · ${selectedYear} YTD`, reportingCurrentPeriods)}>Drill down YTD</button></div>
+                    <Plot
+                        data={[
+                            { type: "scatter", mode: "lines+markers", name: selectedYear, x: monthLabels, y: cumulative(currentNetByMonth), line: { color: "#09ab58", width: 3, shape: "spline" }, marker: { size: 7, color: "#09ab58" }, fill: "tozeroy", fillcolor: "rgba(9,171,88,.08)", customdata: currentPeriods, hovertemplate: "%{y:,.0f} kr<extra></extra>" },
+                            { type: "scatter", mode: "lines+markers", name: compareYear, x: monthLabels, y: cumulative(previousNetByMonth), line: { color: "#87958e", width: 2, dash: "dot", shape: "spline" }, marker: { size: 6 }, customdata: previousPeriods, hovertemplate: "%{y:,.0f} kr<extra></extra>" },
+                        ] as never[]}
+                        layout={{ ...sharedLayout, height: 360, xaxis: modernXAxis, yaxis: modernYAxis } as never}
+                        config={{ displayModeBar: false, responsive: true }} useResizeHandler className="business-plot"
+                        onClick={(event) => {
+                            const period = String(event.points[0]?.customdata ?? "");
+                            if (period && cashFlowRow) onOpenDrilldown(cashFlowRow, `Cash after investing · ${period}`, [period]);
+                        }}
+                    />
+                </section>
+
+                <section className="panel business-chart-panel business-chart-wide business-chart-clickable">
+                    <div className="business-chart-heading"><div><h2>Cash-flow waterfall</h2><span>From income through each expense category to cash after investing · click any step to inspect</span></div><button type="button" className="business-chart-drill-button" onClick={() => cashFlowRow && onOpenDrilldown(cashFlowRow, `Cash-flow waterfall · ${selectedYear} YTD`, reportingCurrentPeriods)}>View cash flow</button></div>
+                    <Plot
+                        data={[{
+                            type: "waterfall",
+                            name: selectedYear,
+                            x: waterfallSteps.map((step) => step.label),
+                            y: waterfallSteps.map((step) => step.value),
+                            measure: waterfallSteps.map((step) => step.key === "diff" || step.key === "cashflow" ? "total" : step.key === "income" ? "absolute" : "relative"),
+                            customdata: waterfallSteps.map((step) => step.key),
+                            text: waterfallText,
+                            increasing: { marker: { color: "#09ab58" } },
+                            decreasing: { marker: { color: "#e45b55" } },
+                            totals: { marker: { color: currentNet >= 0 ? "#09ab58" : "#e45b55" } },
+                            connector: { line: { color: "#718078", width: 1 } },
+                            textposition: "outside",
+                            texttemplate: "%{text}",
+                            hovertemplate: "%{x} · %{text} kr<extra></extra>",
+                        }] as never[]}
+                        layout={{ ...sharedLayout, showlegend: false, height: 390, margin: { l: 68, r: 24, t: 30, b: 72 }, xaxis: modernXAxis, yaxis: modernYAxis } as never}
+                        config={{ displayModeBar: false, responsive: true }} useResizeHandler className="business-plot business-waterfall"
+                        onClick={(event) => {
+                            const key = String(event.points[0]?.customdata ?? "");
+                            const row = waterfallSteps.find((step) => step.key === key)?.row ?? null;
+                            if (row) onOpenDrilldown(row, `${String(event.points[0]?.x ?? row.label)} · ${selectedYear} YTD`, reportingCurrentPeriods);
+                        }}
+                    />
+                </section>
+
+                <section className="panel business-chart-panel business-chart-clickable">
+                    <div className="business-chart-heading"><div><h2>Expense mix <strong className="business-chart-basis">{summaryMode === "average" ? "Avg/month" : "Total"}</strong></h2><span>{summaryMode === "average" ? "Average spend per compared month" : "Largest categories year to date"} · click to drill down</span></div><button type="button" className="business-chart-drill-button" onClick={() => expenseRow && onOpenDrilldown(expenseRow, `Expense mix · ${selectedYear} YTD`, reportingCurrentPeriods)}>View all expenses</button></div>
+                    <Plot
+                        data={[
+                            { type: "bar", orientation: "h", name: selectedYear, y: categoryRows.map((item) => item.row.label).reverse(), x: categoryRows.map((item) => summaryValue(item.current)).reverse(), marker: { color: "#09ab58" }, customdata: categoryRows.map((item) => item.row.key).reverse(), hovertemplate: `%{x:,.0f} kr${summaryMode === "average" ? " / month" : ""}<extra></extra>` },
+                            { type: "bar", orientation: "h", name: compareYear, y: categoryRows.map((item) => item.row.label).reverse(), x: categoryRows.map((item) => summaryValue(item.previous, true)).reverse(), marker: { color: "#b8c7bf" }, customdata: categoryRows.map((item) => item.row.key).reverse(), hovertemplate: `%{x:,.0f} kr${summaryMode === "average" ? " / month" : ""}<extra></extra>` },
+                        ] as never[]}
+                        layout={{ ...sharedLayout, datarevision: summaryMode, barmode: "group", bargap: 0.22, height: 360, margin: { l: 145, r: 24, t: 32, b: 48 }, xaxis: { ...modernYAxis, title: summaryMode === "average" ? "DKK / month" : "DKK" }, yaxis: { showgrid: false, fixedrange: true } } as never}
+                        config={{ displayModeBar: false, responsive: true }} useResizeHandler className="business-plot"
+                        onClick={(event) => {
+                            const key = String(event.points[0]?.customdata ?? "");
+                            const row = section.rows.find((candidate) => candidate.key === key);
+                            const isPrior = String(event.points[0]?.data?.name ?? "") === compareYear;
+                            const periods = isPrior ? reportingPreviousPeriods : reportingCurrentPeriods;
+                            const year = isPrior ? compareYear : selectedYear;
+                            if (row) onOpenDrilldown(row, `${row.label} · ${year} YTD`, periods);
+                        }}
+                    />
+                </section>
+            </div>
+
+            <section className={`panel spending-source-panel${spendingTreemapFullscreen ? " fullscreen" : ""}`}>
+                <div className="business-chart-heading spending-source-heading">
+                    <div>
+                        <h2>Where the money goes</h2>
+                        <span>Payees and spending patterns between categories and individual transactions</span>
+                    </div>
+                    <div className="spending-source-actions">
+                        <label className="spending-source-filter">
+                            <span>Category</span>
+                            <select value={spendingCategory} onChange={(event) => { setSpendingCategory(event.target.value); setShowAllSpendingSources(false); }}>
+                                <option value="">All spending</option>
+                                {spendingCategories.map((category) => <option key={category} value={category}>{category}</option>)}
+                            </select>
+                        </label>
+                        <button
+                            type="button"
+                            className="spending-source-fullscreen"
+                            aria-pressed={spendingTreemapFullscreen}
+                            onClick={() => setSpendingTreemapFullscreen((current) => !current)}
+                        >
+                            <span aria-hidden="true">{spendingTreemapFullscreen ? "↙" : "↗"}</span>
+                            {spendingTreemapFullscreen ? "Exit fullscreen" : "Fullscreen"}
+                        </button>
+                    </div>
+                </div>
+                {spendingSourceRows.length > 0 ? (
+                    <div className="spending-source-layout">
+                        <Plot
+                            key={`spending-treemap-${spendingTreemapFullscreen ? "fullscreen" : "inline"}-${spendingCategory}`}
+                            data={[{
+                                type: "treemap",
+                                ids: [
+                                    ...spendingTreemapCategories.map((category) => `category:${category}`),
+                                    ...spendingTreemapSources.map((item) => `source:${item.key}`),
+                                ],
+                                labels: [
+                                    ...spendingTreemapCategories,
+                                    ...spendingTreemapSources.map((item) => item.label),
+                                ],
+                                parents: [
+                                    ...spendingTreemapCategories.map(() => ""),
+                                    ...spendingTreemapSources.map((item) => `category:${item.category}`),
+                                ],
+                                values: [
+                                    ...spendingTreemapCategories.map((category) => spendingTreemapCategoryTotals.get(category) ?? 0),
+                                    ...spendingTreemapSources.map((item) => item.spend),
+                                ],
+                                customdata: [
+                                    ...spendingTreemapCategories.map(() => ""),
+                                    ...spendingTreemapSources.map((item) => item.searchText),
+                                ],
+                                branchvalues: "total",
+                                marker: {
+                                    colors: [
+                                        ...spendingTreemapCategories.map((category) => spendingCategoryColor.get(category)),
+                                        ...spendingTreemapSources.map((item) => spendingCategoryColor.get(item.category)),
+                                    ],
+                                    line: { color: "rgba(255,255,255,.28)", width: 1 },
+                                },
+                                textinfo: "none",
+                                texttemplate: [
+                                    ...spendingTreemapCategories.map(() => "<b>%{label}</b><br>%{percentRoot:.0%}"),
+                                    ...spendingTreemapSources.map((item) => item.share >= (spendingTreemapFullscreen ? 0.12 : 0.6) ? "<b>%{label}</b><br>%{percentRoot:.1%}" : ""),
+                                ],
+                                textfont: { color: "#f7fffa", size: spendingTreemapFullscreen ? 11 : 11 },
+                                hovertemplate: "<b>%{label}</b><br>%{value:,.0f} kr · %{percentRoot:.1%} of spending<extra></extra>",
+                                pathbar: { visible: false },
+                            }] as never[]}
+                            layout={{ ...sharedLayout, margin: { l: 4, r: 4, t: 8, b: 4 }, height: spendingTreemapFullscreen ? Math.max(600, window.innerHeight - 165) : 430, showlegend: false, uniformtext: { minsize: 8, mode: "hide" } } as never}
+                            config={{ displayModeBar: false, responsive: true }}
+                            useResizeHandler
+                            className="business-plot spending-source-treemap"
+                            onClick={(event) => {
+                                const point = event.points[0] as unknown as { id?: unknown; customdata?: unknown; label?: unknown } | undefined;
+                                const id = String(point?.id ?? "");
+                                const label = String(point?.label ?? "Spending source");
+                                if (id.startsWith("category:")) {
+                                    setSpendingTreemapFullscreen(false);
+                                    setSpendingCategory(id.slice("category:".length));
+                                    setShowAllSpendingSources(false);
+                                    return;
+                                }
+                                const searchText = String(point?.customdata ?? "");
+                                setSpendingTreemapFullscreen(false);
+                                if (searchText) onOpenSpendingSource(`${label} · ${selectedYear} YTD`, searchText, reportingCurrentPeriods);
+                            }}
+                        />
+                        <div className={`spending-source-list${showAllSpendingSources ? " expanded" : ""}`} role="list" aria-label="Top spending sources">
+                            <div className="spending-source-list-head">
+                                <span>Source</span><span>{summaryMode === "average" ? "Avg/month" : "Spend"}</span>
+                            </div>
+                            {spendingSources.length > 12 ? (
+                                <button type="button" className="spending-source-more" onClick={() => setShowAllSpendingSources((current) => !current)}>
+                                    {showAllSpendingSources ? "Show top 12" : `Show all ${spendingSources.length} sources`}
+                                </button>
+                            ) : null}
+                            {spendingSourceRows.map((item) => (
+                                <button
+                                    key={item.key}
+                                    type="button"
+                                    className="spending-source-row"
+                                    onClick={() => onOpenSpendingSource(`${item.label} · ${selectedYear} YTD`, item.searchText, reportingCurrentPeriods)}
+                                >
+                                    <span className="spending-source-copy">
+                                        <strong>{item.label}</strong>
+                                        <small>{item.category} · {item.count} {item.count === 1 ? "payment" : "payments"} across {item.monthCount} {item.monthCount === 1 ? "month" : "months"} · avg {formatBusinessValue(item.average)}</small>
+                                        <span className="spending-source-track"><span style={{ width: `${Math.max(3, item.share)}%`, background: spendingCategoryColor.get(item.category) }} /></span>
+                                    </span>
+                                    <span className="spending-source-value">
+                                        <strong>{formatBusinessValue(summaryValue(item.spend))}</strong>
+                                        <small className={item.change !== null && item.change > 0 ? "spiir-negative" : "spiir-positive"}>{item.cadence} · {formatBusinessDelta(item.change)}</small>
+                                    </span>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                ) : <p className="spending-source-empty">No spending sources are available for this period.</p>}
+            </section>
+
+            <section className="panel business-driver-table">
+                <div className="business-chart-heading"><h2>Cost drivers</h2><span>{summaryMode === "average" ? "Average per compared month" : "Current YTD versus comparable prior period"}</span></div>
+                <table>
+                    <thead><tr><th>Category</th><th>{selectedYear}</th><th>{compareYear}</th><th>Change</th></tr></thead>
+                    <tbody>{categoryRows.map((item) => (
+                        <tr key={item.row.key} onClick={() => onOpenDrilldown(item.row, `${item.row.label} · ${selectedYear} YTD`, reportingCurrentPeriods)}>
+                            <td>{item.row.label}</td><td>{formatBusinessValue(summaryValue(item.current))}</td><td>{formatBusinessValue(summaryValue(item.previous, true))}</td><td className={item.current <= item.previous ? "spiir-positive" : "spiir-negative"}>{formatBusinessDelta(businessDelta(item.current, item.previous))}</td>
+                        </tr>
+                    ))}</tbody>
+                </table>
+            </section>
+        </section>
+    );
+}
+
 export default function SpiirDashboard({ active }: { active: boolean }) {
     const [status, setStatus] = useState<SpiirStatusResponse | null>(() => getCachedSpiirData().status);
     const [overview, setOverview] = useState<SpiirOverviewResponse | null>(() => getCachedSpiirData().overview);
@@ -829,9 +1466,9 @@ export default function SpiirDashboard({ active }: { active: boolean }) {
     const [toolbarHost, setToolbarHost] = useState<HTMLElement | null>(null);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [tab, setTab] = useState<SpiirTab>("monthly");
-    const [expandedMonthlyRows, setExpandedMonthlyRows] = useState<Set<string>>(new Set(["income", "expense", "hashtag"]));
-    const [expandedYearlyRows, setExpandedYearlyRows] = useState<Set<string>>(new Set(["income", "expense", "hashtag"]));
+    const [tab, setTab] = useState<SpiirTab>("business");
+    const [expandedMonthlyRows, setExpandedMonthlyRows] = useState<Set<string>>(new Set(["income", "expense", "investment", "hashtag"]));
+    const [expandedYearlyRows, setExpandedYearlyRows] = useState<Set<string>>(new Set(["income", "expense", "investment", "hashtag"]));
     const [nordeaDrilldownModal, setNordeaDrilldownModal] = useState<NordeaDrilldownModalState>(null);
     const [sunburstState, setSunburstState] = useState<SunburstState>(null);
     const [monthWindow, setMonthWindow] = useState(() => readStoredString("spiir_monthCount", "12"));
@@ -839,7 +1476,6 @@ export default function SpiirDashboard({ active }: { active: boolean }) {
     const [excludeLatestMonth, setExcludeLatestMonth] = useState(() => readStoredBool("spiir_excludeMonth", true));
     const [excludeLatestYear, setExcludeLatestYear] = useState(() => readStoredBool("spiir_excludeYear", false));
     const [heatmap, setHeatmap] = useState(() => readStoredBool("spiir_heatmap", false));
-    const [totalSort, setTotalSort] = useState(() => readStoredBool("spiir_totalSort", false));
     const [showPrevTotals, setShowPrevTotals] = useState(() => readStoredBool("spiir_prevAvgDelta", false));
     const [monthlyChart, setMonthlyChart] = useState<ChartOptions>({
         show: readStoredBool("chart.monthly.show", true),
@@ -855,6 +1491,7 @@ export default function SpiirDashboard({ active }: { active: boolean }) {
         bars: readStoredBool("chart.yearly.bars", false),
         level: readStoredString("chart.yearly.level", "top") as ChartLevel
     });
+    const [hiddenMonthlySeries, setHiddenMonthlySeries] = useState<Set<string>>(new Set());
 
     useEffect(() => {
         if (!active) {
@@ -867,12 +1504,17 @@ export default function SpiirDashboard({ active }: { active: boolean }) {
         void loadSpiir();
     }, [active]);
 
+    useEffect(() => {
+        if (active && tab === "business" && status?.processed_exists && transactions === null) {
+            void ensureTransactionsLoaded();
+        }
+    }, [active, status?.processed_exists, tab, transactions]);
+
     useEffect(() => { storeString("spiir_monthCount", monthWindow); }, [monthWindow]);
     useEffect(() => { storeString("spiir_yearCount", yearWindow); }, [yearWindow]);
     useEffect(() => { storeBool("spiir_excludeMonth", excludeLatestMonth); }, [excludeLatestMonth]);
     useEffect(() => { storeBool("spiir_excludeYear", excludeLatestYear); }, [excludeLatestYear]);
     useEffect(() => { storeBool("spiir_heatmap", heatmap); }, [heatmap]);
-    useEffect(() => { storeBool("spiir_totalSort", totalSort); }, [totalSort]);
     useEffect(() => { storeBool("spiir_prevAvgDelta", showPrevTotals); }, [showPrevTotals]);
     useEffect(() => {
         storeBool("chart.monthly.show", monthlyChart.show);
@@ -1002,6 +1644,17 @@ export default function SpiirDashboard({ active }: { active: boolean }) {
         });
     }
 
+    function handleOpenSpendingSource(title: string, searchText: string, periods: string[]): void {
+        setNordeaDrilldownModal({
+            title,
+            ...periodFilterForDrilldown(periods, "month"),
+            visibilityFilter: "expense",
+            categoryFilter: null,
+            outflowsOnly: true,
+            searchText,
+        });
+    }
+
     async function handleOpenSunburst(title: string, periods: string[], mode: SunburstMode, rows: SpiirOverviewRow[]): Promise<void> {
         setSunburstState({ title, periods, mode, rows });
     }
@@ -1028,8 +1681,8 @@ export default function SpiirDashboard({ active }: { active: boolean }) {
     const monthlyPrevPeriods = useMemo(() => previousWindow(monthly?.periods ?? [], monthlyVisiblePeriods), [monthly?.periods, monthlyVisiblePeriods]);
     const yearlyPrevPeriods = useMemo(() => previousWindow(yearly?.periods ?? [], yearlyVisiblePeriods), [yearly?.periods, yearlyVisiblePeriods]);
     const monthlyChartFigure = useMemo(
-        () => monthly && monthlyVisiblePeriods.length > 0 ? buildPeriodChartFigure(monthly, monthlyVisiblePeriods, "month", monthlyChart) : null,
-        [monthly, monthlyChart, monthlyVisiblePeriods]
+        () => monthly && monthlyVisiblePeriods.length > 0 ? buildPeriodChartFigure(monthly, monthlyVisiblePeriods, "month", { ...monthlyChart, bars: true, cumulative: false, stacked: false, level: "top" }, hiddenMonthlySeries) : null,
+        [hiddenMonthlySeries, monthly, monthlyChart, monthlyVisiblePeriods]
     );
     const yearlyChartFigure = useMemo(
         () => yearly && yearlyVisiblePeriods.length > 0 ? buildPeriodChartFigure(yearly, yearlyVisiblePeriods, "year", yearlyChart) : null,
@@ -1050,6 +1703,7 @@ export default function SpiirDashboard({ active }: { active: boolean }) {
     const toolbar = active && toolbarHost ? createPortal(
         <div className="spiir-header-tools">
             <div className="scope-switcher" aria-label="Vælg Spiir-visning">
+                <button type="button" className={tab === "business" ? "nav-pill active" : "nav-pill"} onClick={() => setTab("business")}>Business review</button>
                 <button type="button" className={tab === "monthly" ? "nav-pill active" : "nav-pill"} onClick={() => setTab("monthly")}>
                     Måned
                 </button>
@@ -1057,20 +1711,19 @@ export default function SpiirDashboard({ active }: { active: boolean }) {
                     År
                 </button>
             </div>
-            <label className="spiir-header-control spiir-window-control">
+            {tab !== "business" ? <label className="spiir-header-control spiir-window-control">
                 <select className="spiir-window-select" value={currentWindow} onChange={(event) => setCurrentWindow(event.target.value)}>
                     {currentWindowOptions.map((option) => (
                         <option key={option.value} value={option.value}>{option.label}</option>
                     ))}
                 </select>
-            </label>
-            <div className="scope-switcher spiir-toggle-group" aria-label="Spiir toggles">
+            </label> : null}
+            {tab !== "business" ? <div className="scope-switcher spiir-toggle-group" aria-label="Spiir toggles">
                 <TogglePill label="Skip sidste" active={currentExcludeLatest} onClick={() => setCurrentExcludeLatest(!currentExcludeLatest)} />
                 <TogglePill label="Heatmap" active={heatmap} onClick={() => setHeatmap(!heatmap)} />
-                <TogglePill label="Flat" active={totalSort} onClick={() => setTotalSort(!totalSort)} />
                 <TogglePill label="Prev" active={showPrevTotals} onClick={() => setShowPrevTotals(!showPrevTotals)} />
                 <TogglePill label="Chart" active={currentChart.show} onClick={() => setCurrentChart((current) => ({ ...current, show: !current.show }))} />
-            </div>
+            </div> : null}
         </div>,
         toolbarHost
     ) : null;
@@ -1098,15 +1751,35 @@ export default function SpiirDashboard({ active }: { active: boolean }) {
                 </div>
             ) : null}
 
-            {currentChart.show && currentChartFigure ? (
+            {tab !== "business" && currentChart.show && currentChartFigure ? (
                 <section className="panel spiir-panel spiir-plot-panel">
                     <div className="spiir-plot-surface">
                         <div className="panel-header compact-header spiir-plot-header">
                             <div>
                                 <h2>{tab === "monthly" ? "Månedschart" : "Årchart"}</h2>
-                                <span>Samme top-chart controls som den gamle Spiir-visning</span>
+                                <span>{tab === "monthly" ? "Income and expenses share one axis; net difference overlays them" : "Yearly development and category composition"}</span>
                             </div>
-                            <div className="spiir-control-bar spiir-control-bar-chart">
+                            {tab === "monthly" ? <div className="spiir-series-legend" aria-label="Vis eller skjul serier">
+                                {[
+                                    ["income", "Income"],
+                                    ["expense", "Expenses"],
+                                    ["diff", "Net difference"],
+                                ].map(([key, label]) => (
+                                    <button
+                                        key={key}
+                                        type="button"
+                                        className={`spiir-series-legend-item spiir-series-${key}`}
+                                        aria-pressed={!hiddenMonthlySeries.has(key)}
+                                        onClick={() => setHiddenMonthlySeries((current) => {
+                                            const next = new Set(current);
+                                            if (next.has(key)) next.delete(key); else next.add(key);
+                                            return next;
+                                        })}
+                                    >
+                                        <span aria-hidden="true" />{label}
+                                    </button>
+                                ))}
+                            </div> : <div className="spiir-control-bar spiir-control-bar-chart">
                                 <TogglePill label="Cumulative" active={currentChart.cumulative} onClick={() => setCurrentChart((current) => ({ ...current, cumulative: !current.cumulative }))} />
                                 <TogglePill label="Stack" active={currentChart.stacked} onClick={() => setCurrentChart((current) => ({ ...current, stacked: !current.stacked }))} />
                                 <TogglePill label="Bars" active={currentChart.bars} onClick={() => setCurrentChart((current) => ({ ...current, bars: !current.bars }))} />
@@ -1121,7 +1794,7 @@ export default function SpiirDashboard({ active }: { active: boolean }) {
                                         <option value="sub">Sub</option>
                                     </select>
                                 </label>
-                            </div>
+                            </div>}
                         </div>
                         <Plot
                             data={currentChartFigure.data as never[]}
@@ -1134,6 +1807,15 @@ export default function SpiirDashboard({ active }: { active: boolean }) {
                 </section>
             ) : null}
 
+            {tab === "business" && monthly ? (
+                <BusinessReview
+                    section={monthly}
+                    transactions={transactions}
+                    onOpenDrilldown={(row, title, periods) => void handleOpenDrilldown(row, title, periods, "month")}
+                    onOpenSpendingSource={handleOpenSpendingSource}
+                />
+            ) : null}
+
             {tab === "monthly" && monthly ? (
                 <OverviewSection
                     title="Månedsoversigt"
@@ -1142,7 +1824,6 @@ export default function SpiirDashboard({ active }: { active: boolean }) {
                     visiblePeriods={monthlyVisiblePeriods}
                     prevPeriods={monthlyPrevPeriods}
                     expandedRows={expandedMonthlyRows}
-                    totalSort={totalSort}
                     heatmap={heatmap}
                     showPrevTotals={showPrevTotals}
                     onExpandAll={() => setExpandedMonthlyRows(new Set(monthly.rows.map((row) => row.key)))}
@@ -1169,7 +1850,6 @@ export default function SpiirDashboard({ active }: { active: boolean }) {
                     visiblePeriods={yearlyVisiblePeriods}
                     prevPeriods={yearlyPrevPeriods}
                     expandedRows={expandedYearlyRows}
-                    totalSort={totalSort}
                     heatmap={heatmap}
                     showPrevTotals={showPrevTotals}
                     onExpandAll={() => setExpandedYearlyRows(new Set(yearly.rows.map((row) => row.key)))}

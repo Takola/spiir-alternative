@@ -191,8 +191,15 @@ export interface NordeaTransactionsResponse {
     offset?: number;
     limit?: number | null;
     has_more?: boolean;
-    accounts: unknown[];
+    accounts: NordeaAccount[];
     transactions: NordeaTransaction[];
+}
+
+export interface NordeaAccount {
+    account_id?: { iban?: string | null } | null;
+    name?: string | null;
+    product?: string | null;
+    currency?: string | null;
 }
 
 export interface NordeaRetrieveResponse {

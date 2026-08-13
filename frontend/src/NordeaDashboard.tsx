@@ -5,10 +5,10 @@ import { getNordeaRetrieveStatus, getNordeaTaxonomy, getNordeaTransactions, getS
 import { computeAllTransactionsLoaded, localLedgerFirstPage, mergeUpdatedTransactions } from "./nordeaState";
 import SpiirSunburstModal, { type SunburstState } from "./SpiirSunburstModal";
 import { formatSplitDraftAmount, parseSplitDraftAmount } from "./splitAmount";
-import type { NordeaCategoryOption, NordeaHashtagOption, NordeaOverridePatch, NordeaRetrieveJobStatus, NordeaSplitLine, NordeaTaxonomyResponse, NordeaTransaction, NordeaTransactionsResponse, SpiirIncomeExpenseMonth, SpiirIncomeExpenseSeriesResponse, SpiirOverviewResponse, SpiirStatusResponse, SpiirTransaction } from "./types";
+import type { NordeaAccount, NordeaCategoryOption, NordeaHashtagOption, NordeaOverridePatch, NordeaRetrieveJobStatus, NordeaSplitLine, NordeaTaxonomyResponse, NordeaTransaction, NordeaTransactionsResponse, SpiirIncomeExpenseMonth, SpiirIncomeExpenseSeriesResponse, SpiirOverviewResponse, SpiirStatusResponse, SpiirTransaction } from "./types";
 
 type PeriodFilter = "all" | "custom" | `year:${string}` | `month:${string}`;
-type VisibilityFilter = "all" | "income" | "expense" | "bills" | "consumption" | "category" | "uncategorized" | "extraordinary";
+type VisibilityFilter = "all" | "income" | "expense" | "investment" | "operating" | "cashflow" | "bills" | "consumption" | "category" | "uncategorized" | "extraordinary";
 type SortKey = "booking_date" | "description" | "category" | "amount";
 type SortDirection = "asc" | "desc";
 
@@ -20,6 +20,7 @@ export type NordeaDrilldownFilter = {
     visibilityFilter?: VisibilityFilter;
     categoryFilter?: NordeaCategoryOption | null;
     searchText?: string;
+    outflowsOnly?: boolean;
 };
 type SplitDraftLine = {
     id: string;
@@ -461,13 +462,15 @@ function categorySubFilterValue(mainCategoryId: string, categoryId: string): str
     return `sub::${mainCategoryId}::${categoryId}`;
 }
 
-function categoryFilterMatches(rowCategory: NordeaCategoryOption, selectedCategory: NordeaCategoryOption | null): boolean {
+export function categoryFilterMatches(rowCategory: NordeaCategoryOption, selectedCategory: NordeaCategoryOption | null): boolean {
     if (!selectedCategory) {
         return false;
     }
     const selectedCategoryId = categorySubId(selectedCategory);
     if (selectedCategoryId.startsWith("__main__::")) {
-        return categoryMainId(rowCategory) === categoryMainId(selectedCategory);
+        return selectedCategory.mainCategoryName
+            ? rowCategory.mainCategoryName === selectedCategory.mainCategoryName
+            : categoryMainId(rowCategory) === categoryMainId(selectedCategory);
     }
     if (!categoryMainId(selectedCategory)) {
         return categorySubId(rowCategory) === selectedCategoryId
@@ -489,6 +492,15 @@ function visibilityLabel(filter: VisibilityFilter, categoryLabel: string): strin
     }
     if (filter === "expense") {
         return "Expense";
+    }
+    if (filter === "investment") {
+        return "Investering & pension";
+    }
+    if (filter === "operating") {
+        return "Indkomst og udgifter";
+    }
+    if (filter === "cashflow") {
+        return "Cash after investing";
     }
     if (filter === "consumption") {
         return "Alt forbrug";
@@ -607,6 +619,7 @@ function rowMatchesFilters(
         categoryFilter: NordeaCategoryOption | null;
         searchText: string;
         showTransfersAlways: boolean;
+        outflowsOnly?: boolean;
     }
 ): boolean {
     const bookingDate = row.transaction.booking_date || "";
@@ -619,6 +632,11 @@ function rowMatchesFilters(
     if (filters.periodFilter.startsWith("month:") && bookingDate.slice(0, 7) !== filters.periodFilter.slice(6)) {
         return false;
     }
+    if (filters.outflowsOnly) {
+        if (row.amount >= 0 || isTransferCategory(row.category)) {
+            return false;
+        }
+    }
     const transferOverride = filters.visibilityFilter === "all" && filters.showTransfersAlways && isTransferCategory(row.category);
     if (!transferOverride) {
         if (filters.visibilityFilter === "bills" && !SPIIR_FIXED_CATEGORY_NAMES.has(row.category.categoryName)) {
@@ -628,6 +646,18 @@ function rowMatchesFilters(
             return false;
         }
         if (filters.visibilityFilter === "expense" && row.category.categoryType !== "Expense") {
+            return false;
+        }
+        if (filters.visibilityFilter === "investment" && row.category.categoryType !== "Investment") {
+            return false;
+        }
+        if (filters.visibilityFilter === "operating" && !["Income", "Expense"].includes(row.category.categoryType)) {
+            return false;
+        }
+        if (filters.visibilityFilter === "cashflow" && !["Income", "Expense", "Investment"].includes(row.category.categoryType)) {
+            return false;
+        }
+        if (["operating", "cashflow"].includes(filters.visibilityFilter) && isTransferCategory(row.category)) {
             return false;
         }
         if (filters.visibilityFilter === "consumption" && row.amount >= 0) {
@@ -1826,6 +1856,32 @@ function SortHeader({
     );
 }
 
+function accountIban(account: NordeaAccount): string {
+    return account.account_id?.iban ?? "unknown";
+}
+
+function accountRole(account: NordeaAccount): { label: string; tone: string } {
+    const name = (account.name ?? "").toLowerCase();
+    const product = (account.product ?? "").toLowerCase();
+    const hasJacob = name.includes("jacob");
+    const hasAnne = name.includes("anne");
+    if (hasJacob && hasAnne) {
+        return product.includes("budget") ? { label: "Shared", tone: "shared" } : { label: "Home shared", tone: "shared-home" };
+    }
+    if (hasJacob) {
+        return { label: "Husband", tone: "husband" };
+    }
+    if (hasAnne) {
+        return { label: "Wife", tone: "wife" };
+    }
+    return { label: "Shared", tone: "shared" };
+}
+
+function accountDisplayName(account: NordeaAccount): string {
+    const iban = accountIban(account);
+    return iban === "unknown" ? "Unknown account" : `•••• ${iban.slice(-4)}`;
+}
+
 export default function NordeaDashboard({
     active,
     source = "nordea",
@@ -1863,6 +1919,7 @@ export default function NordeaDashboard({
     const [customPeriodEnd, setCustomPeriodEnd] = useState(initialFilter?.periodEnd ?? "");
     const [visibilityFilter, setVisibilityFilter] = useState<VisibilityFilter>(initialFilter?.visibilityFilter ?? "all");
     const [categoryFilter, setCategoryFilter] = useState<NordeaCategoryOption | null>(initialFilter?.categoryFilter ?? null);
+    const [selectedAccountIbans, setSelectedAccountIbans] = useState<string[]>([]);
     const [showTransfersAlways, setShowTransfersAlways] = useState(true);
     const [visibilityPanelOpen, setVisibilityPanelOpen] = useState(false);
     const [searchText, setSearchText] = useState(initialFilter?.searchText ?? "");
@@ -2006,7 +2063,10 @@ export default function NordeaDashboard({
                     }
                     setError(loadError instanceof Error ? loadError.message : "Kunne ikke hente Nordea metadata");
                 });
-            const nextData = await transactionsPromise;
+            const loadedData = await transactionsPromise;
+            const nextData = isLocalLedgerSource
+                ? { ...loadedData, accounts: (await getNordeaTransactions()).accounts }
+                : loadedData;
             if (requestId !== loadRequestIdRef.current) {
                 return;
             }
@@ -2111,7 +2171,10 @@ export default function NordeaDashboard({
 
     async function reloadTransactionsAfterRetrieve(): Promise<void> {
         invalidateLocalLedgerCache();
-        const refreshed = await loadTransactions(isLocalLedgerSource ? localLedgerFirstPage(LOCAL_LEDGER_INITIAL_LIMIT) : undefined);
+        const loaded = await loadTransactions(isLocalLedgerSource ? localLedgerFirstPage(LOCAL_LEDGER_INITIAL_LIMIT) : undefined);
+        const refreshed = isLocalLedgerSource
+            ? { ...loaded, accounts: (await getNordeaTransactions()).accounts }
+            : loaded;
         setData(refreshed);
         if (isLocalLedgerSource) {
             setAllTransactionsLoaded(computeAllTransactionsLoaded(refreshed));
@@ -2332,8 +2395,26 @@ export default function NordeaDashboard({
         return () => query.removeEventListener("change", updateLayout);
     }, []);
 
-    const transactions = data?.transactions ?? [];
-    const pendingReviewCount = data?.pending_review_count ?? transactions.filter((transaction) => isPendingReview(transaction)).length;
+    const accounts = useMemo(() => (data?.accounts ?? []).filter((account) => accountIban(account) !== "unknown"), [data?.accounts]);
+    useEffect(() => {
+        if (accounts.length === 0) {
+            setSelectedAccountIbans([]);
+            return;
+        }
+        setSelectedAccountIbans((current) => {
+            const available = new Set(accounts.map(accountIban));
+            const retained = current.filter((iban) => available.has(iban));
+            return retained.length > 0 ? retained : accounts.map(accountIban);
+        });
+    }, [accounts]);
+
+    const selectedAccountSet = useMemo(() => new Set(selectedAccountIbans), [selectedAccountIbans]);
+    const allAccountsSelected = accounts.length > 0 && selectedAccountIbans.length === accounts.length;
+    const transactions = useMemo(
+        () => (data?.transactions ?? []).filter((transaction) => !transaction.account_iban || selectedAccountSet.has(transaction.account_iban)),
+        [data?.transactions, selectedAccountSet],
+    );
+    const pendingReviewCount = transactions.filter((transaction) => isPendingReview(transaction)).length;
     const displayTransactions = useMemo(() => buildDisplayRows(transactions), [transactions]);
     const selectedRows = displayTransactions.filter((row) => selectedIds.includes(row.rowId));
     const selectedParentIds = Array.from(new Set(selectedRows.map((row) => row.parentId)));
@@ -2381,10 +2462,9 @@ export default function NordeaDashboard({
             });
     }, [taxonomy.categories]);
     const filteredTransactions = useMemo(() => {
-        const activeFilters = { periodFilter, periodStart: customPeriodStart, periodEnd: customPeriodEnd, visibilityFilter, categoryFilter, searchText, showTransfersAlways };
+        const activeFilters = { periodFilter, periodStart: customPeriodStart, periodEnd: customPeriodEnd, visibilityFilter, categoryFilter, searchText, showTransfersAlways, outflowsOnly: initialFilter?.outflowsOnly };
         if (embedded && pinnedDrilldownRowIds) {
-            const needle = searchText.trim().toLowerCase();
-            return displayTransactions.filter((row) => pinnedDrilldownRowIds.has(row.rowId) && (!needle || transactionTextForRow(row).toLowerCase().includes(needle)));
+            return displayTransactions.filter((row) => pinnedDrilldownRowIds.has(row.rowId) && rowMatchesFilters(row, activeFilters));
         }
         return displayTransactions.filter((row) => rowMatchesFilters(row, activeFilters));
     }, [categoryFilter, customPeriodEnd, customPeriodStart, displayTransactions, embedded, periodFilter, pinnedDrilldownRowIds, searchText, showTransfersAlways, visibilityFilter]);
@@ -2446,7 +2526,7 @@ export default function NordeaDashboard({
         if (!embedded || data === null || loading) {
             return;
         }
-        const activeFilters = { periodFilter, periodStart: customPeriodStart, periodEnd: customPeriodEnd, visibilityFilter, categoryFilter, searchText: "", showTransfersAlways };
+        const activeFilters = { periodFilter, periodStart: customPeriodStart, periodEnd: customPeriodEnd, visibilityFilter, categoryFilter, searchText: "", showTransfersAlways, outflowsOnly: initialFilter?.outflowsOnly };
         const matchingIds = displayTransactions.filter((row) => rowMatchesFilters(row, activeFilters)).map((row) => row.rowId);
         setPinnedDrilldownRowIds((current) => {
             if (current === null) {
@@ -3128,6 +3208,44 @@ export default function NordeaDashboard({
             ) : null}
             {notice ? <p className="info-banner">{notice}</p> : null}
             {isLocalLedgerSource && !embedded ? <IncomeExpenseOverview series={incomeExpenseSeries} onOpenSunburst={(month) => void openIncomeExpenseSunburst(month)} /> : null}
+            {accounts.length > 0 && !embedded ? (
+                <section className="account-filter-panel" aria-label="Account filter">
+                    <div className="account-filter-heading">
+                        <div>
+                            <span className="eyebrow">Accounts</span>
+                            <h2>Choose your view</h2>
+                        </div>
+                        <span className="account-filter-count">{selectedAccountIbans.length} of {accounts.length} active</span>
+                    </div>
+                    <div className="account-filter-actions">
+                        <button type="button" className="account-select-all" onClick={() => setSelectedAccountIbans(allAccountsSelected ? [] : accounts.map(accountIban))}>
+                            {allAccountsSelected ? "Clear all" : "Show all"}
+                        </button>
+                        <div className="account-chip-grid">
+                            {accounts.map((account) => {
+                                const iban = accountIban(account);
+                                const role = accountRole(account);
+                                const checked = selectedAccountSet.has(iban);
+                                return (
+                                    <label key={iban} className={`account-chip ${checked ? "is-selected" : ""} account-chip-${role.tone}`}>
+                                        <input
+                                            type="checkbox"
+                                            checked={checked}
+                                            onChange={() => setSelectedAccountIbans((current) => current.includes(iban) ? current.filter((item) => item !== iban) : [...current, iban])}
+                                        />
+                                        <span className="account-chip-mark" aria-hidden="true">{checked ? "✓" : ""}</span>
+                                        <span className="account-chip-copy">
+                                            <strong>{role.label}</strong>
+                                            <span>{accountDisplayName(account)}</span>
+                                            <small>{account.name ?? account.product ?? "Lån & Spar"}</small>
+                                        </span>
+                                    </label>
+                                );
+                            })}
+                        </div>
+                    </div>
+                </section>
+            ) : null}
             <section className="nordea-poster-controls">
                 <div className="nordea-filter-bar">
                     <div className="nordea-spiir-filter-shell">
@@ -3234,6 +3352,10 @@ export default function NordeaDashboard({
                                 <label className="nordea-spiir-radio-row">
                                     <input type="radio" checked={visibilityFilter === "consumption"} onChange={() => setVisibilityFilter("consumption")} />
                                     <span>Alt forbrug</span>
+                                </label>
+                                <label className="nordea-spiir-radio-row">
+                                    <input type="radio" checked={visibilityFilter === "investment"} onChange={() => setVisibilityFilter("investment")} />
+                                    <span>Investering &amp; pension</span>
                                 </label>
                                 <div className="nordea-spiir-radio-row nordea-spiir-category-row">
                                     <input
@@ -3368,7 +3490,7 @@ export default function NordeaDashboard({
                     </button>
                 ) : null}
             </section> : null}
-            {!isMobileLayout ? <section className="nordea-poster-content">
+            {!isMobileLayout ? <section className={`nordea-poster-content ${selectedIds.length > 0 ? "has-edit-panel" : ""}`}>
                 <div className="nordea-posting-table-container" ref={tableContainerRef}>
                     <table className="nordea-table">
                         <colgroup>

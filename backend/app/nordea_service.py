@@ -37,6 +37,10 @@ API_BASE = "https://api.enablebanking.com"
 ALIAS_RE = re.compile(r"[0-9A-Za-z_æøåÆØÅ-]{3,}")
 NORDEA_TAXONOMY_CACHE_VERSION = 1
 NORDEA_INCREMENTAL_LOOKBACK_DAYS = 7
+INCOME_DESCRIPTION_RE = re.compile(
+    r"\b(l[oø]n(?:overf[oø]rsel)?|b[oø]rne-?\s*og\s*ungeydelse|dagpenge|feriepenge|pensionsudbetaling)\b",
+    re.I,
+)
 
 _NORDEA_TAXONOMY_CACHE: dict[str, Any] = {
     "key": None,
@@ -83,6 +87,44 @@ def _overrides_file() -> Path:
 
 def _session_file() -> Path:
     return _enablebanking_dir() / "latest_session.json"
+
+
+def _session_files() -> list[Path]:
+    """Return the current session plus any separately authorized sessions."""
+    paths = [_session_file(), *_enablebanking_dir().glob("session_*.json")]
+    unique: list[Path] = []
+    seen: set[Path] = set()
+    for path in paths:
+        resolved = path.resolve()
+        if resolved in seen or not path.exists():
+            continue
+        seen.add(resolved)
+        unique.append(path)
+    return unique
+
+
+def _load_enablebanking_accounts() -> tuple[list[dict[str, Any]], int]:
+    """Load and union accounts from all locally saved consent sessions."""
+    accounts_by_key: dict[str, dict[str, Any]] = {}
+    session_count = 0
+    for path in _session_files():
+        try:
+            session = _read_json(path)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(session, dict) or not isinstance(session.get("accounts"), list):
+            continue
+        session_count += 1
+        session_id = session.get("session_id")
+        for account in session["accounts"]:
+            if not isinstance(account, dict) or not account.get("uid"):
+                continue
+            account_copy = dict(account)
+            account_copy["_enablebanking_session_id"] = session_id
+            account_id = account.get("account_id") or {}
+            key = str(account_id.get("iban") or account.get("uid"))
+            accounts_by_key[key] = account_copy
+    return list(accounts_by_key.values()), session_count
 
 
 def _key_path() -> Path:
@@ -300,15 +342,23 @@ def _normalize_transaction(account: dict[str, Any], transaction: dict[str, Any])
     booking_date = transaction.get("booking_date") or transaction.get("transaction_date") or transaction.get("value_date")
     bank_code = transaction.get("bank_transaction_code") or {}
     account_key = account.get("uid") or account.get("identification_hash") or account.get("account_id", {}).get("iban") or "unknown"
+    amount = _signed_amount(transaction)
+    description = _description(transaction)
+    is_income = amount > 0 and bool(INCOME_DESCRIPTION_RE.search(description))
+    category_type = "Income" if is_income else "Expense"
+    main_category_id = "synthetic-income" if is_income else UNCATEGORIZED_MAIN_CATEGORY_ID
+    main_category_name = "Indkomst" if is_income else UNCATEGORIZED_MAIN_CATEGORY_NAME
+    category_id = "synthetic-income-default" if is_income else UNCATEGORIZED_CATEGORY_ID
+    category_name = "Løn og ydelser" if is_income else UNCATEGORIZED_CATEGORY_NAME
     return {
         "id": f"enablebanking:nordea:{account_key}:{entry_reference}",
         "entry_reference": entry_reference,
         "booking_date": booking_date,
         "transaction_date": transaction.get("transaction_date"),
         "value_date": transaction.get("value_date"),
-        "amount": _signed_amount(transaction),
+        "amount": amount,
         "currency": transaction.get("transaction_amount", {}).get("currency") or account.get("currency") or "DKK",
-        "description": _description(transaction),
+        "description": description,
         "remittance_information": _join_lines(transaction.get("remittance_information")),
         "creditor_name": _party_name(transaction.get("creditor")),
         "debtor_name": _party_name(transaction.get("debtor")),
@@ -318,11 +368,11 @@ def _normalize_transaction(account: dict[str, Any], transaction: dict[str, Any])
         "credit_debit_indicator": transaction.get("credit_debit_indicator"),
         "account_iban": account.get("account_id", {}).get("iban"),
         "account_name": account.get("name"),
-        "categoryType": "Expense",
-        "mainCategoryId": UNCATEGORIZED_MAIN_CATEGORY_ID,
-        "mainCategoryName": UNCATEGORIZED_MAIN_CATEGORY_NAME,
-        "categoryId": UNCATEGORIZED_CATEGORY_ID,
-        "categoryName": UNCATEGORIZED_CATEGORY_NAME,
+        "categoryType": category_type,
+        "mainCategoryId": main_category_id,
+        "mainCategoryName": main_category_name,
+        "categoryId": category_id,
+        "categoryName": category_name,
         "note": "",
         "hashtags": [],
         "is_extraordinary": False,
@@ -791,15 +841,18 @@ def retrieve_nordea_transactions(
             progress(label, progress_value, extra)
 
     notify("Læser Enable Banking-session", 5, None)
-    if not _session_file().exists():
+    accounts, session_count = _load_enablebanking_accounts()
+    if not session_count:
         raise FileNotFoundError("Missing Enable Banking session. Re-authorize account access first.")
-    session = _read_json(_session_file())
-    accounts = session.get("accounts") or []
     if not accounts:
         raise RuntimeError("Enable Banking session has no linked accounts")
 
     params, fetch_window = _retrieve_params_for_existing_data(incremental=incremental)
-    notify("Kontrollerer tilknyttede konti", 10, {"account_count": len(accounts), "fetch_window": fetch_window})
+    notify(
+        "Kontrollerer tilknyttede konti",
+        10,
+        {"account_count": len(accounts), "session_count": session_count, "fetch_window": fetch_window},
+    )
     raw_outputs: list[Path] = []
     all_transactions = 0
     for account_index, account in enumerate(accounts, start=1):
@@ -825,8 +878,8 @@ def retrieve_nordea_transactions(
 
         raw_payload = {
             "fetched_at": _iso_utc_now(),
-            "session_id": session.get("session_id"),
-            "account": account,
+            "session_id": account.get("_enablebanking_session_id"),
+            "account": {key: value for key, value in account.items() if key != "_enablebanking_session_id"},
             "params": params,
             "transaction_count": len(transactions),
             "transactions": transactions,

@@ -641,6 +641,7 @@ def _make_period_overview(df: pd.DataFrame, periods: list[str], period_column: s
     by_cat = filtered.groupby(["mainCategoryName", "categoryName", "categoryId", period_column])["amount"].sum().unstack(fill_value=0)
     income = filtered[filtered["categoryType"] == "Income"].groupby([period_column])["amount"].sum()
     expense = filtered[filtered["categoryType"] == "Expense"].groupby([period_column])["amount"].sum()
+    investment = filtered[filtered["categoryType"] == "Investment"].groupby([period_column])["amount"].sum()
 
     rows: list[dict[str, Any]] = []
 
@@ -659,7 +660,7 @@ def _make_period_overview(df: pd.DataFrame, periods: list[str], period_column: s
             row.update(meta)
         rows.append(row)
 
-    add_row("diff", "Diff", 0, None, {period: income.get(period, 0) + expense.get(period, 0) for period in periods}, {"kind": "diff"})
+    add_row("diff", "Difference", 0, None, {period: income.get(period, 0) + expense.get(period, 0) for period in periods}, {"kind": "diff"})
     add_row("income", "Indkomst", 0, None, income.to_dict(), {"kind": "income", "categoryType": "Income"})
 
     income_df = filtered[filtered["categoryType"] == "Income"]
@@ -688,9 +689,10 @@ def _make_period_overview(df: pd.DataFrame, periods: list[str], period_column: s
     add_row("expense", "Expense", 0, None, expense.to_dict(), {"kind": "expense", "categoryType": "Expense"})
 
     for main_name in by_main.index:
-        if income_main_name and main_name == income_main_name:
-            continue
         sample = filtered[filtered["mainCategoryName"] == main_name]
+        main_category_type = str(sample.iloc[0]["categoryType"]) if len(sample) else "Expense"
+        if (income_main_name and main_name == income_main_name) or main_category_type == "Investment":
+            continue
         main_id = sample.iloc[0]["mainCategoryId"] if len(sample) else None
         add_row(
             f"main:{main_name}",
@@ -716,6 +718,26 @@ def _make_period_overview(df: pd.DataFrame, periods: list[str], period_column: s
                 {
                     "kind": "sub",
                     "mainCategoryName": main_name,
+                    "categoryName": str(category_name),
+                    "categoryId": category_id,
+                },
+            )
+
+    investment_df = filtered[filtered["categoryType"] == "Investment"]
+    add_row("investment", "Investering & pension", 0, None, investment.to_dict(), {"kind": "investment", "categoryType": "Investment"})
+    if len(investment_df):
+        investment_by_cat = investment_df.groupby(["categoryName", "categoryId", period_column])["amount"].sum().unstack(fill_value=0)
+        for (category_name, category_id), row_values in investment_by_cat.groupby(level=[0, 1]).sum().iterrows():
+            add_row(
+                f"sub:investment:{category_id}",
+                str(category_name),
+                1,
+                "investment",
+                row_values.to_dict(),
+                {
+                    "kind": "sub",
+                    "categoryType": "Investment",
+                    "mainCategoryName": "Investering & pension",
                     "categoryName": str(category_name),
                     "categoryId": category_id,
                 },

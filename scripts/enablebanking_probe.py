@@ -74,12 +74,17 @@ def command_aspsps() -> None:
     print(f"\nSaved full ASPSP list: {DATA_DIR / 'aspsps_dk_personal_ais.json'}")
 
 
-def command_auth_url(days: int) -> None:
+def command_auth_url(days: int, aspsp_name: str | None = None, aspsp_country: str | None = None) -> None:
     state = str(uuid.uuid4())
     valid_until = (utc_now() + dt.timedelta(days=days)).isoformat().replace("+00:00", "Z")
+    aspsp = {"name": "Nordea", "country": "DK"}
+    if aspsp_name:
+        aspsp["name"] = aspsp_name
+    if aspsp_country:
+        aspsp["country"] = aspsp_country
     body = {
         "access": {"balances": True, "transactions": True, "valid_until": valid_until},
-        "aspsp": {"name": "Nordea", "country": "DK"},
+        "aspsp": aspsp,
         "psu_type": "personal",
         "redirect_url": REDIRECT_URL,
         "state": state,
@@ -145,6 +150,8 @@ def main() -> None:
 
     auth_parser = subparsers.add_parser("auth-url")
     auth_parser.add_argument("--days", type=int, default=170)
+    auth_parser.add_argument("--aspsp-name", help="ASPSP name to request (e.g. 'Lån og spar')")
+    auth_parser.add_argument("--aspsp-country", help="ASPSP country code (e.g. 'DK')")
 
     session_parser = subparsers.add_parser("session")
     session_parser.add_argument("--code", required=True)
@@ -159,7 +166,7 @@ def main() -> None:
     if args.command == "aspsps":
         command_aspsps()
     elif args.command == "auth-url":
-        command_auth_url(args.days)
+        command_auth_url(args.days, aspsp_name=getattr(args, "aspsp_name", None), aspsp_country=getattr(args, "aspsp_country", None))
     elif args.command == "session":
         command_session(args.code)
     elif args.command == "transactions":
