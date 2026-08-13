@@ -104,7 +104,7 @@ export interface SpiirIncomeExpenseSeriesResponse {
     periods: SpiirIncomeExpensePeriod[];
 }
 
-export interface NordeaTransaction {
+export interface LedgerTransaction {
     id: string;
     entry_reference: string;
     booking_date: string;
@@ -133,7 +133,7 @@ export interface NordeaTransaction {
     pending_review?: boolean;
     original_booking_date?: string | null;
     custom_booking_date?: string | null;
-    splits: NordeaSplitLine[];
+    splits: LedgerSplitLine[];
     split_group_id?: string | null;
     split_line_id?: string | null;
     split_original_parent_id?: string | null;
@@ -141,7 +141,7 @@ export interface NordeaTransaction {
     source: string;
 }
 
-export interface NordeaCategoryOption {
+export interface LedgerCategoryOption {
     categoryType: string;
     mainCategoryId?: string | number | null;
     mainCategoryName: string;
@@ -151,26 +151,26 @@ export interface NordeaCategoryOption {
     search_aliases?: string[];
 }
 
-export interface NordeaHashtagOption {
+export interface LedgerHashtagOption {
     name: string;
     usage_count: number;
     last_seen: string;
 }
 
-export interface NordeaTaxonomyResponse {
-    categories: NordeaCategoryOption[];
-    hashtags: NordeaHashtagOption[];
+export interface LedgerTaxonomyResponse {
+    categories: LedgerCategoryOption[];
+    hashtags: LedgerHashtagOption[];
 }
 
-export interface NordeaSplitLine {
+export interface LedgerSplitLine {
     id: string;
     amount: number;
     note: string;
-    category: NordeaCategoryOption;
+    category: LedgerCategoryOption;
 }
 
-export interface NordeaOverridePatch {
-    category?: NordeaCategoryOption | null;
+export interface LedgerOverridePatch {
+    category?: LedgerCategoryOption | null;
     booking_date?: string | null;
     note?: string;
     hashtags?: string[];
@@ -178,10 +178,10 @@ export interface NordeaOverridePatch {
     remove_hashtags?: string[];
     is_extraordinary?: boolean;
     pending_review?: boolean;
-    splits?: NordeaSplitLine[];
+    splits?: LedgerSplitLine[];
 }
 
-export interface NordeaTransactionsResponse {
+export interface LedgerTransactionsResponse {
     generated_at?: string | null;
     last_retrieved_at?: string | null;
     last_retrieve_duration_seconds?: number | null;
@@ -191,11 +191,11 @@ export interface NordeaTransactionsResponse {
     offset?: number;
     limit?: number | null;
     has_more?: boolean;
-    accounts: NordeaAccount[];
-    transactions: NordeaTransaction[];
+    accounts: LedgerAccount[];
+    transactions: LedgerTransaction[];
 }
 
-export interface NordeaAccount {
+export interface LedgerAccount {
     account_id?: { iban?: string | null } | null;
     name?: string | null;
     product?: string | null;
@@ -203,7 +203,7 @@ export interface NordeaAccount {
     balance?: { amount?: number | string | null; currency?: string | null; updated_at?: string | null } | null;
 }
 
-export interface NordeaRetrieveResponse {
+export interface LedgerRetrieveResponse {
     retrieved_count: number;
     transaction_count: number;
     raw_files: string[];
@@ -212,7 +212,7 @@ export interface NordeaRetrieveResponse {
     fetch_window?: Record<string, unknown>;
 }
 
-export interface NordeaRetrieveEvent {
+export interface LedgerRetrieveEvent {
     at: string;
     label: string;
     progress: number;
@@ -220,7 +220,7 @@ export interface NordeaRetrieveEvent {
     [key: string]: unknown;
 }
 
-export interface NordeaRetrieveJobStatus {
+export interface LedgerRetrieveJobStatus {
     job_id?: string | null;
     status: "idle" | "queued" | "running" | "succeeded" | "failed";
     started_at?: string | null;
@@ -228,8 +228,8 @@ export interface NordeaRetrieveJobStatus {
     completed_at?: string | null;
     progress: number;
     current_phase?: string | null;
-    events: NordeaRetrieveEvent[];
-    result?: NordeaRetrieveResponse | null;
+    events: LedgerRetrieveEvent[];
+    result?: LedgerRetrieveResponse | null;
     sync_result?: {
         created_count: number;
         updated_count: number;
@@ -241,10 +241,10 @@ export interface NordeaRetrieveJobStatus {
     error?: string | null;
 }
 
-export interface NordeaOverrideResponse {
+export interface LedgerOverrideResponse {
     updated_count: number;
     updated_at: string;
-    updated_transactions?: NordeaTransaction[];
+    updated_transactions?: LedgerTransaction[];
     deleted_transaction_ids?: string[];
 }
 

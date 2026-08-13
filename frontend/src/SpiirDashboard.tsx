@@ -10,10 +10,10 @@ import {
     rebuildSpiirFromLocal,
     scheduleSpiirRebuildFromLocal
 } from "./api";
-import NordeaDashboard, { type NordeaDrilldownFilter } from "./NordeaDashboard";
+import LedgerDashboard, { type LedgerDrilldownFilter } from "./LedgerDashboard";
 import SpiirSunburstModal, { expenseMainColorFromHue, expenseSubColorFromHue, incomePartColorFromHue, type SunburstMode, type SunburstState } from "./SpiirSunburstModal";
 import type {
-    NordeaCategoryOption,
+    LedgerCategoryOption,
     SpiirOverviewResponse,
     SpiirOverviewRow,
     SpiirStatusResponse,
@@ -32,7 +32,7 @@ type ChartOptions = {
     level: ChartLevel;
 };
 
-type NordeaDrilldownModalState = NordeaDrilldownFilter | null;
+type LedgerDrilldownModalState = LedgerDrilldownFilter | null;
 
 type ChartSeries = {
     key: string;
@@ -619,7 +619,7 @@ function monthEndDate(month: string): string {
     return `${month}-${String(day).padStart(2, "0")}`;
 }
 
-function periodFilterForDrilldown(periods: string[], kind: PeriodKind): Pick<NordeaDrilldownFilter, "periodFilter" | "periodStart" | "periodEnd"> {
+function periodFilterForDrilldown(periods: string[], kind: PeriodKind): Pick<LedgerDrilldownFilter, "periodFilter" | "periodStart" | "periodEnd"> {
     if (periods.length === 1) {
         return { periodFilter: kind === "year" ? `year:${periods[0]}` : `month:${periods[0]}` };
     }
@@ -632,7 +632,7 @@ function periodFilterForDrilldown(periods: string[], kind: PeriodKind): Pick<Nor
     return { periodFilter: "custom", periodStart: `${firstPeriod}-01`, periodEnd: monthEndDate(lastPeriod) };
 }
 
-function categoryOptionFromOverviewRow(row: SpiirOverviewRow): NordeaCategoryOption | null {
+function categoryOptionFromOverviewRow(row: SpiirOverviewRow): LedgerCategoryOption | null {
     if (row.kind === "sub" && row.categoryId !== null && row.categoryId !== undefined) {
         return {
             categoryType: row.categoryType || "Expense",
@@ -656,7 +656,7 @@ function categoryOptionFromOverviewRow(row: SpiirOverviewRow): NordeaCategoryOpt
     return null;
 }
 
-function drilldownFilterFromOverviewRow(row: SpiirOverviewRow, periods: string[], kind: PeriodKind): NordeaDrilldownFilter {
+function drilldownFilterFromOverviewRow(row: SpiirOverviewRow, periods: string[], kind: PeriodKind): LedgerDrilldownFilter {
     const categoryFilter = categoryOptionFromOverviewRow(row);
     const period = periodFilterForDrilldown(periods, kind);
     if (row.kind === "income") {
@@ -689,7 +689,7 @@ function drilldownFilterFromOverviewRow(row: SpiirOverviewRow, periods: string[]
     };
 }
 
-function categoryOptionFromTransactions(items: SpiirTransaction[]): NordeaCategoryOption | null {
+function categoryOptionFromTransactions(items: SpiirTransaction[]): LedgerCategoryOption | null {
     const first = items[0];
     if (!first || first.categoryId === null || first.categoryId === undefined) {
         return null;
@@ -708,7 +708,7 @@ function categoryOptionFromTransactions(items: SpiirTransaction[]): NordeaCatego
     };
 }
 
-function periodFilterFromTransactions(items: SpiirTransaction[]): NordeaDrilldownFilter["periodFilter"] {
+function periodFilterFromTransactions(items: SpiirTransaction[]): LedgerDrilldownFilter["periodFilter"] {
     const months = [...new Set(items.map((item) => item.yyyymm).filter(Boolean))];
     if (months.length === 1) {
         return `month:${months[0]}`;
@@ -1504,7 +1504,7 @@ export default function SpiirDashboard({ active }: { active: boolean }) {
     const [tab, setTab] = useState<SpiirTab>("business");
     const [expandedMonthlyRows, setExpandedMonthlyRows] = useState<Set<string>>(new Set(["income", "expense", "investment", "hashtag"]));
     const [expandedYearlyRows, setExpandedYearlyRows] = useState<Set<string>>(new Set(["income", "expense", "investment", "hashtag"]));
-    const [nordeaDrilldownModal, setNordeaDrilldownModal] = useState<NordeaDrilldownModalState>(null);
+    const [ledgerDrilldownModal, setLedgerDrilldownModal] = useState<LedgerDrilldownModalState>(null);
     const [sunburstState, setSunburstState] = useState<SunburstState>(null);
     const [monthWindow, setMonthWindow] = useState(() => readStoredString("spiir_monthCount", "12"));
     const [yearWindow, setYearWindow] = useState(() => readStoredString("spiir_yearCount", "all"));
@@ -1567,7 +1567,7 @@ export default function SpiirDashboard({ active }: { active: boolean }) {
     }, [yearlyChart]);
 
     useEffect(() => {
-        if (!nordeaDrilldownModal && !sunburstState) {
+        if (!ledgerDrilldownModal && !sunburstState) {
             return;
         }
 
@@ -1576,8 +1576,8 @@ export default function SpiirDashboard({ active }: { active: boolean }) {
                 return;
             }
             event.preventDefault();
-            if (nordeaDrilldownModal) {
-                setNordeaDrilldownModal(null);
+            if (ledgerDrilldownModal) {
+                setLedgerDrilldownModal(null);
                 return;
             }
             closeSunburst();
@@ -1585,7 +1585,7 @@ export default function SpiirDashboard({ active }: { active: boolean }) {
 
         window.addEventListener("keydown", handleKeyDown);
         return () => window.removeEventListener("keydown", handleKeyDown);
-    }, [nordeaDrilldownModal, sunburstState]);
+    }, [ledgerDrilldownModal, sunburstState]);
 
     function scheduleBackgroundSpiirRefresh(attempt = 1): void {
         const refreshId = backgroundRefreshIdRef.current + 1;
@@ -1673,14 +1673,14 @@ export default function SpiirDashboard({ active }: { active: boolean }) {
 
     async function handleOpenDrilldown(row: SpiirOverviewRow, title: string, periods: string[], kind: PeriodKind): Promise<void> {
         const drilldownFilter = drilldownFilterFromOverviewRow(row, periods, kind);
-        setNordeaDrilldownModal({
+        setLedgerDrilldownModal({
             ...drilldownFilter,
             title,
         });
     }
 
     function handleOpenSpendingSource(title: string, searchText: string, periods: string[]): void {
-        setNordeaDrilldownModal({
+        setLedgerDrilldownModal({
             title,
             ...periodFilterForDrilldown(periods, "month"),
             visibilityFilter: "expense",
@@ -1698,9 +1698,9 @@ export default function SpiirDashboard({ active }: { active: boolean }) {
         setSunburstState(null);
     }
 
-    function openNordeaDrilldownFromTransactions(title: string, items: SpiirTransaction[]): void {
+    function openLedgerDrilldownFromTransactions(title: string, items: SpiirTransaction[]): void {
         const categoryFilter = categoryOptionFromTransactions(items);
-        setNordeaDrilldownModal({
+        setLedgerDrilldownModal({
             title,
             periodFilter: periodFilterFromTransactions(items),
             visibilityFilter: categoryFilter ? "category" : "all",
@@ -1907,22 +1907,21 @@ export default function SpiirDashboard({ active }: { active: boolean }) {
                 <SpiirSunburstModal
                     state={sunburstState}
                     transactions={transactions}
-                    closeOnEscape={!nordeaDrilldownModal}
+                    closeOnEscape={!ledgerDrilldownModal}
                     ensureTransactionsLoaded={ensureTransactionsLoaded}
                     onClose={closeSunburst}
-                    onOpenTransactions={openNordeaDrilldownFromTransactions}
+                    onOpenTransactions={openLedgerDrilldownFromTransactions}
                 />
             ) : null}
-            {nordeaDrilldownModal ? (
-                <div className="modal-backdrop" onClick={() => setNordeaDrilldownModal(null)}>
+            {ledgerDrilldownModal ? (
+                <div className="modal-backdrop" onClick={() => setLedgerDrilldownModal(null)}>
                     <section className="nordea-drilldown-modal" onClick={(event) => event.stopPropagation()}>
-                        <NordeaDashboard
-                            key={`${nordeaDrilldownModal.title}|${nordeaDrilldownModal.periodFilter ?? "all"}|${nordeaDrilldownModal.categoryFilter?.categoryId ?? ""}|${nordeaDrilldownModal.searchText ?? ""}`}
+                        <LedgerDashboard
+                            key={`${ledgerDrilldownModal.title}|${ledgerDrilldownModal.periodFilter ?? "all"}|${ledgerDrilldownModal.categoryFilter?.categoryId ?? ""}|${ledgerDrilldownModal.searchText ?? ""}`}
                             active
-                            source="local-ledger"
                             embedded
-                            initialFilter={nordeaDrilldownModal}
-                            onClose={() => setNordeaDrilldownModal(null)}
+                            initialFilter={ledgerDrilldownModal}
+                            onClose={() => setLedgerDrilldownModal(null)}
                         />
                     </section>
                 </div>

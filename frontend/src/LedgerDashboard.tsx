@@ -1,24 +1,24 @@
 import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
 
-import { getNordeaRetrieveStatus, getNordeaTaxonomy, getNordeaTransactions, getSpiirIncomeExpenseSeries, getSpiirLocalLedgerTransactions, getSpiirLocalLedgerTransactionsPage, getSpiirOverview, getSpiirStatus, getSpiirTransactions, invalidateLocalLedgerCache, invalidateSpiirCache, rebuildSpiirFromLocal, saveNordeaOverrides, saveSpiirLocalLedgerOverrides, scheduleSpiirRebuildFromLocal, startNordeaRetrieveJob, syncNordeaIntoSpiirLocalLedger } from "./api";
-import { computeAllTransactionsLoaded, localLedgerFirstPage, mergeUpdatedTransactions } from "./nordeaState";
+import { getLedgerRetrieveStatus, getLedgerTaxonomy, getSpiirIncomeExpenseSeries, getSpiirLocalLedgerTransactions, getSpiirLocalLedgerTransactionsPage, getSpiirOverview, getSpiirStatus, getSpiirTransactions, invalidateLocalLedgerCache, invalidateSpiirCache, rebuildSpiirFromLocal, saveSpiirLocalLedgerOverrides, scheduleSpiirRebuildFromLocal, startLedgerRetrieveJob } from "./api";
+import { computeAllTransactionsLoaded, localLedgerFirstPage, mergeUpdatedTransactions } from "./ledgerState";
 import SpiirSunburstModal, { type SunburstState } from "./SpiirSunburstModal";
 import { formatSplitDraftAmount, parseSplitDraftAmount } from "./splitAmount";
-import type { NordeaAccount, NordeaCategoryOption, NordeaHashtagOption, NordeaOverridePatch, NordeaRetrieveJobStatus, NordeaSplitLine, NordeaTaxonomyResponse, NordeaTransaction, NordeaTransactionsResponse, SpiirIncomeExpenseMonth, SpiirIncomeExpenseSeriesResponse, SpiirOverviewResponse, SpiirStatusResponse, SpiirTransaction } from "./types";
+import type { LedgerAccount, LedgerCategoryOption, LedgerHashtagOption, LedgerOverridePatch, LedgerRetrieveJobStatus, LedgerSplitLine, LedgerTaxonomyResponse, LedgerTransaction, LedgerTransactionsResponse, SpiirIncomeExpenseMonth, SpiirIncomeExpenseSeriesResponse, SpiirOverviewResponse, SpiirStatusResponse, SpiirTransaction } from "./types";
 
 type PeriodFilter = "all" | "custom" | `year:${string}` | `month:${string}`;
 type VisibilityFilter = "all" | "income" | "expense" | "investment" | "operating" | "cashflow" | "bills" | "consumption" | "category" | "uncategorized" | "extraordinary";
 type SortKey = "booking_date" | "description" | "category" | "amount";
 type SortDirection = "asc" | "desc";
 
-export type NordeaDrilldownFilter = {
+export type LedgerDrilldownFilter = {
     title: string;
     periodFilter?: PeriodFilter;
     periodStart?: string;
     periodEnd?: string;
     visibilityFilter?: VisibilityFilter;
-    categoryFilter?: NordeaCategoryOption | null;
+    categoryFilter?: LedgerCategoryOption | null;
     searchText?: string;
     outflowsOnly?: boolean;
 };
@@ -27,20 +27,20 @@ type SplitDraftLine = {
     amount: number;
     amountText: string;
     note: string;
-    category: NordeaCategoryOption | null;
+    category: LedgerCategoryOption | null;
     locked: boolean;
 };
 
-type NordeaDisplayRow = {
+type LedgerDisplayRow = {
     rowId: string;
     parentId: string;
-    transaction: NordeaTransaction;
+    transaction: LedgerTransaction;
     splitId: string | null;
     splitIndex: number | null;
     isSplitChild: boolean;
     amount: number;
     note: string;
-    category: NordeaCategoryOption;
+    category: LedgerCategoryOption;
 };
 
 const HASHTAG_TOKEN_RE = /(?<![0-9A-Za-z_æøåÆØÅ-])#([0-9A-Za-z_æøåÆØÅ-]+)/gi;
@@ -181,7 +181,7 @@ function spiirMainName(value: string): string {
     return value === "Andet" ? "Andre leveomkostninger" : value;
 }
 
-function spiirMenuMainName(category: NordeaCategoryOption): string {
+function spiirMenuMainName(category: LedgerCategoryOption): string {
     return category.categoryName === "Ikke kategoriseret" ? "Ikke kategoriseret" : spiirMainName(category.mainCategoryName || "Diverse");
 }
 
@@ -267,7 +267,7 @@ function formatDkk(value: number): string {
     }).format(value);
 }
 
-function counterparty(transaction: NordeaTransaction): string {
+function counterparty(transaction: LedgerTransaction): string {
     return transaction.creditor_name || transaction.debtor_name || transaction.bank_transaction_code || "-";
 }
 
@@ -298,7 +298,7 @@ function longMonthLabel(value: string): string {
     return new Intl.DateTimeFormat("da-DK", { month: "long", year: "numeric" }).format(parsed);
 }
 
-function transactionText(transaction: NordeaTransaction): string {
+function transactionText(transaction: LedgerTransaction): string {
     return [
         transaction.description,
         transaction.remittance_information,
@@ -309,7 +309,7 @@ function transactionText(transaction: NordeaTransaction): string {
     ].filter(Boolean).join(" ");
 }
 
-function detailTitle(transaction: NordeaTransaction): string {
+function detailTitle(transaction: LedgerTransaction): string {
     return [
         transaction.remittance_information,
         transaction.bank_transaction_code,
@@ -319,7 +319,7 @@ function detailTitle(transaction: NordeaTransaction): string {
     ].filter(Boolean).join("\n");
 }
 
-function descriptionLabel(transaction: NordeaTransaction): string {
+function descriptionLabel(transaction: LedgerTransaction): string {
     const note = transaction.note?.trim();
     return note ? `${transaction.description} (${note})` : transaction.description;
 }
@@ -373,7 +373,7 @@ function activeHashtagToken(value: string, caret: number | null): { start: numbe
     return { start: beforeCaret.length - token.length - 1, prefix: token };
 }
 
-function matchingHashtagSuggestions(hashtags: NordeaHashtagOption[], prefix: string): NordeaHashtagOption[] {
+function matchingHashtagSuggestions(hashtags: LedgerHashtagOption[], prefix: string): LedgerHashtagOption[] {
     if (!prefix) {
         return hashtags.slice(0, 5);
     }
@@ -401,7 +401,7 @@ function highlightedHashtagName(name: string, prefix: string): (string | JSX.Ele
     ];
 }
 
-function similarWords(transaction: NordeaTransaction): string[] {
+function similarWords(transaction: LedgerTransaction): string[] {
     return transaction.description
         .split(/\s+/)
         .map((word) => word.replace(/[(),.;:]/g, "").trim())
@@ -409,14 +409,14 @@ function similarWords(transaction: NordeaTransaction): string[] {
         .slice(0, 5);
 }
 
-function categoryKey(category: Pick<NordeaCategoryOption, "mainCategoryId" | "categoryId"> | null | undefined): string {
+function categoryKey(category: Pick<LedgerCategoryOption, "mainCategoryId" | "categoryId"> | null | undefined): string {
     if (!category?.categoryId) {
         return "";
     }
     return `${String(category.mainCategoryId ?? "")}|${String(category.categoryId)}`;
 }
 
-function buildMainCategoryOption(mainCategoryId: string | number | null | undefined, mainCategoryName: string, categoryType = "Expense", usageCount = 0): NordeaCategoryOption {
+function buildMainCategoryOption(mainCategoryId: string | number | null | undefined, mainCategoryName: string, categoryType = "Expense", usageCount = 0): LedgerCategoryOption {
     return {
         mainCategoryId: mainCategoryId ?? "",
         mainCategoryName,
@@ -427,7 +427,7 @@ function buildMainCategoryOption(mainCategoryId: string | number | null | undefi
     };
 }
 
-function categoryFromTransaction(transaction: NordeaTransaction): NordeaCategoryOption {
+function categoryFromTransaction(transaction: LedgerTransaction): LedgerCategoryOption {
     return {
         mainCategoryId: transaction.mainCategoryId ?? "synthetic-diverse",
         mainCategoryName: transaction.mainCategoryName || "Diverse",
@@ -438,19 +438,19 @@ function categoryFromTransaction(transaction: NordeaTransaction): NordeaCategory
     };
 }
 
-function categoryLabel(transaction: NordeaTransaction): string {
+function categoryLabel(transaction: LedgerTransaction): string {
     return transaction.categoryName || "Ikke kategoriseret";
 }
 
-function categoryLabelForRow(row: NordeaDisplayRow): string {
+function categoryLabelForRow(row: LedgerDisplayRow): string {
     return row.category.categoryName || "Ikke kategoriseret";
 }
 
-function categoryMainId(value: Pick<NordeaCategoryOption, "mainCategoryId">): string {
+function categoryMainId(value: Pick<LedgerCategoryOption, "mainCategoryId">): string {
     return String(value.mainCategoryId ?? "");
 }
 
-function categorySubId(value: Pick<NordeaCategoryOption, "categoryId">): string {
+function categorySubId(value: Pick<LedgerCategoryOption, "categoryId">): string {
     return String(value.categoryId ?? "");
 }
 
@@ -462,7 +462,7 @@ function categorySubFilterValue(mainCategoryId: string, categoryId: string): str
     return `sub::${mainCategoryId}::${categoryId}`;
 }
 
-export function categoryFilterMatches(rowCategory: NordeaCategoryOption, selectedCategory: NordeaCategoryOption | null): boolean {
+export function categoryFilterMatches(rowCategory: LedgerCategoryOption, selectedCategory: LedgerCategoryOption | null): boolean {
     if (!selectedCategory) {
         return false;
     }
@@ -514,11 +514,11 @@ function visibilityLabel(filter: VisibilityFilter, categoryLabel: string): strin
     return "Ekstraordinære poster";
 }
 
-function isTransferCategory(category: NordeaCategoryOption): boolean {
+function isTransferCategory(category: LedgerCategoryOption): boolean {
     return spiirMenuMainName(category) === "Vis ikke";
 }
 
-function nordeaRowClassName(row: NordeaDisplayRow, selected: boolean, selectedCount: number): string | undefined {
+function ledgerRowClassName(row: LedgerDisplayRow, selected: boolean, selectedCount: number): string | undefined {
     const classes = [];
     if (selected) {
         classes.push("nordea-selected-row");
@@ -536,12 +536,12 @@ function nordeaRowClassName(row: NordeaDisplayRow, selected: boolean, selectedCo
     return classes.length > 0 ? classes.join(" ") : undefined;
 }
 
-function descriptionLabelForRow(row: NordeaDisplayRow): string {
+function descriptionLabelForRow(row: LedgerDisplayRow): string {
     const note = row.note.trim();
     return note ? `${row.transaction.description} (${note})` : row.transaction.description;
 }
 
-function transactionTextForRow(row: NordeaDisplayRow): string {
+function transactionTextForRow(row: LedgerDisplayRow): string {
     const hashtags = (row.transaction.hashtags ?? []).flatMap((tag) => {
         const normalizedTag = normalizeHashtag(tag);
         return normalizedTag ? [normalizedTag, `#${normalizedTag}`] : [];
@@ -554,7 +554,7 @@ function transactionTextForRow(row: NordeaDisplayRow): string {
     ].filter(Boolean).join(" ");
 }
 
-function rowHasHashtag(row: NordeaDisplayRow, hashtag: string): boolean {
+function rowHasHashtag(row: LedgerDisplayRow, hashtag: string): boolean {
     const normalizedTag = normalizeHashtag(hashtag);
     if (!normalizedTag) {
         return false;
@@ -565,11 +565,11 @@ function rowHasHashtag(row: NordeaDisplayRow, hashtag: string): boolean {
     ].some((tag) => normalizeHashtag(tag) === normalizedTag);
 }
 
-function isPendingReview(transaction: NordeaTransaction): boolean {
+function isPendingReview(transaction: LedgerTransaction): boolean {
     return Boolean(transaction.pending_review);
 }
 
-function transactionSortValueForRow(row: NordeaDisplayRow, sortKey: SortKey): string | number {
+function transactionSortValueForRow(row: LedgerDisplayRow, sortKey: SortKey): string | number {
     if (sortKey === "booking_date") {
         return row.transaction.booking_date || "";
     }
@@ -586,19 +586,19 @@ function roundAmount(value: number): number {
     return Math.round(value * 100) / 100;
 }
 
-function isUncategorizedCategory(category: NordeaCategoryOption | null | undefined): boolean {
+function isUncategorizedCategory(category: LedgerCategoryOption | null | undefined): boolean {
     return !category || category.categoryName === "Ikke kategoriseret";
 }
 
-function hasEffectiveSplit(transaction: NordeaTransaction): boolean {
+function hasEffectiveSplit(transaction: LedgerTransaction): boolean {
     return (transaction.splits ?? []).length > 1 || Boolean(transaction.split_group_id);
 }
 
-function hasEmbeddedSplit(transaction: NordeaTransaction): boolean {
+function hasEmbeddedSplit(transaction: LedgerTransaction): boolean {
     return (transaction.splits ?? []).length > 1;
 }
 
-function splitLineSortKey(transaction: NordeaTransaction): [number, string] {
+function splitLineSortKey(transaction: LedgerTransaction): [number, string] {
     return [transaction.split_line_index ?? 999999, transaction.id];
 }
 
@@ -610,13 +610,13 @@ function isGatewayTimeoutError(error: unknown): boolean {
 }
 
 function rowMatchesFilters(
-    row: NordeaDisplayRow,
+    row: LedgerDisplayRow,
     filters: {
         periodFilter: PeriodFilter;
         periodStart?: string;
         periodEnd?: string;
         visibilityFilter: VisibilityFilter;
-        categoryFilter: NordeaCategoryOption | null;
+        categoryFilter: LedgerCategoryOption | null;
         searchText: string;
         showTransfersAlways: boolean;
         outflowsOnly?: boolean;
@@ -677,7 +677,7 @@ function rowMatchesFilters(
     return !needle || transactionTextForRow(row).toLowerCase().includes(needle);
 }
 
-function categoryOptionFromSpiirTransactions(items: SpiirTransaction[]): NordeaCategoryOption | null {
+function categoryOptionFromSpiirTransactions(items: SpiirTransaction[]): LedgerCategoryOption | null {
     const first = items[0];
     if (!first || first.categoryId === null || first.categoryId === undefined) {
         return null;
@@ -696,7 +696,7 @@ function categoryOptionFromSpiirTransactions(items: SpiirTransaction[]): NordeaC
     };
 }
 
-function periodFilterFromSpiirTransactions(items: SpiirTransaction[]): NordeaDrilldownFilter["periodFilter"] {
+function periodFilterFromSpiirTransactions(items: SpiirTransaction[]): LedgerDrilldownFilter["periodFilter"] {
     const months = [...new Set(items.map((item) => item.yyyymm).filter(Boolean))];
     if (months.length === 1) {
         return `month:${months[0]}`;
@@ -705,9 +705,9 @@ function periodFilterFromSpiirTransactions(items: SpiirTransaction[]): NordeaDri
     return years.length === 1 ? `year:${years[0]}` : "all";
 }
 
-function buildDisplayRows(transactions: NordeaTransaction[]): NordeaDisplayRow[] {
+function buildDisplayRows(transactions: LedgerTransaction[]): LedgerDisplayRow[] {
     const splitChildIds = new Set<string>();
-    const canonicalSplitGroups = new Map<string, NordeaTransaction[]>();
+    const canonicalSplitGroups = new Map<string, LedgerTransaction[]>();
     const renderedCanonicalGroups = new Set<string>();
     for (const transaction of transactions) {
         const groupId = transaction.split_group_id?.trim();
@@ -724,7 +724,7 @@ function buildDisplayRows(transactions: NordeaTransaction[]): NordeaDisplayRow[]
         }
     }
 
-    return transactions.flatMap<NordeaDisplayRow>((transaction) => {
+    return transactions.flatMap<LedgerDisplayRow>((transaction) => {
         if (splitChildIds.has(transaction.id)) {
             return [];
         }
@@ -786,7 +786,7 @@ function compareText(left: string, right: string): number {
     return left.localeCompare(right, "da", { sensitivity: "base" });
 }
 
-function transactionSortValue(transaction: NordeaTransaction, sortKey: SortKey): string | number {
+function transactionSortValue(transaction: LedgerTransaction, sortKey: SortKey): string | number {
     if (sortKey === "booking_date") {
         return transaction.booking_date || "";
     }
@@ -812,9 +812,9 @@ function CategorySelect({
     searchOnly = false,
     bubbleClosedTableKeys = false
 }: {
-    categories: NordeaCategoryOption[];
+    categories: LedgerCategoryOption[];
     value: string;
-    onChange: (category: NordeaCategoryOption | null) => void;
+    onChange: (category: LedgerCategoryOption | null) => void;
     allowMainSelection?: boolean;
     disabled?: boolean;
     placeholder?: string;
@@ -834,7 +834,7 @@ function CategorySelect({
     const [submenuStyle, setSubmenuStyle] = useState<CSSProperties>({});
     const normalizedQuery = query.trim().toLowerCase();
     const categoryGroups = useMemo(() => {
-        const byMain = new Map<string, NordeaCategoryOption[]>();
+        const byMain = new Map<string, LedgerCategoryOption[]>();
         categories.forEach((category) => {
             const mainName = spiirMenuMainName(category);
             byMain.set(mainName, [...(byMain.get(mainName) ?? []), category]);
@@ -880,7 +880,7 @@ function CategorySelect({
         if (!normalizedQuery) {
             return [];
         }
-        const results: { category: NordeaCategoryOption; alias: string; ranking: number }[] = [];
+        const results: { category: LedgerCategoryOption; alias: string; ranking: number }[] = [];
         for (const category of allCategories) {
             const labelRanking = spiirSearchRank(category.categoryName, normalizedQuery);
             if (labelRanking > 0) {
@@ -1008,7 +1008,7 @@ function CategorySelect({
         return () => window.cancelAnimationFrame(frame);
     }, [open, normalizedQuery, activeGroup?.mainName]);
 
-    function selectCategory(category: NordeaCategoryOption): void {
+    function selectCategory(category: LedgerCategoryOption): void {
         onChange(category);
         setQuery("");
         setOpen(false);
@@ -1036,7 +1036,7 @@ function CategorySelect({
         }
     }
 
-    function optionSubtitle(category: NordeaCategoryOption): string {
+    function optionSubtitle(category: LedgerCategoryOption): string {
         const alias = normalizedQuery
             ? (category.search_aliases ?? []).find((item) => item.toLowerCase().includes(normalizedQuery))
             : null;
@@ -1354,7 +1354,7 @@ function HashtagTextarea({
     onKeyDown,
 }: {
     value: string;
-    hashtags: NordeaHashtagOption[];
+    hashtags: LedgerHashtagOption[];
     rows?: number;
     placeholder?: string;
     onChange: (value: string) => void;
@@ -1394,7 +1394,7 @@ function HashtagTextarea({
         setCaret(element.selectionStart);
     }
 
-    function selectSuggestion(hashtag: NordeaHashtagOption): void {
+    function selectSuggestion(hashtag: LedgerHashtagOption): void {
         if (!token || caret === null) {
             return;
         }
@@ -1475,7 +1475,7 @@ function NoteEditor({
 }: {
     entityId: string;
     note: string;
-    hashtags: NordeaHashtagOption[];
+    hashtags: LedgerHashtagOption[];
     saving: boolean;
     onSave: (note: string) => void;
 }) {
@@ -1755,15 +1755,15 @@ function MobileReviewRow({
     onCategoryChange,
     onSplit,
 }: {
-    row: NordeaDisplayRow;
+    row: LedgerDisplayRow;
     expanded: boolean;
-    categories: NordeaCategoryOption[];
-    hashtags: NordeaHashtagOption[];
+    categories: LedgerCategoryOption[];
+    hashtags: LedgerHashtagOption[];
     editControlsDisabled: boolean;
-    onOpen: (row: NordeaDisplayRow, focusCategoryInput?: boolean) => void;
-    onClose: (row: NordeaDisplayRow, note: string) => void;
-    onCategoryChange: (row: NordeaDisplayRow, category: NordeaCategoryOption) => void;
-    onSplit: (row: NordeaDisplayRow) => void;
+    onOpen: (row: LedgerDisplayRow, focusCategoryInput?: boolean) => void;
+    onClose: (row: LedgerDisplayRow, note: string) => void;
+    onCategoryChange: (row: LedgerDisplayRow, category: LedgerCategoryOption) => void;
+    onSplit: (row: LedgerDisplayRow) => void;
 }) {
     const [noteText, setNoteText] = useState(row.note);
     const note = row.note.trim();
@@ -1856,11 +1856,11 @@ function SortHeader({
     );
 }
 
-function accountIban(account: NordeaAccount): string {
+function accountIban(account: LedgerAccount): string {
     return account.account_id?.iban ?? "unknown";
 }
 
-function accountRole(account: NordeaAccount): { label: string; tone: string } {
+function accountRole(account: LedgerAccount): { label: string; tone: string } {
     const name = (account.name ?? "").toLowerCase();
     const product = (account.product ?? "").toLowerCase();
     const hasJacob = name.includes("jacob");
@@ -1877,7 +1877,7 @@ function accountRole(account: NordeaAccount): { label: string; tone: string } {
     return { label: "Shared", tone: "shared" };
 }
 
-function accountDisplayName(account: NordeaAccount): string {
+function accountDisplayName(account: LedgerAccount): string {
     const amount = Number(account.balance?.amount);
     if (!Number.isFinite(amount)) {
         return "Saldo ikke hentet";
@@ -1889,22 +1889,19 @@ function accountDisplayName(account: NordeaAccount): string {
     }).format(amount);
 }
 
-export default function NordeaDashboard({
+export default function LedgerDashboard({
     active,
-    source = "nordea",
     embedded = false,
     initialFilter = null,
     onClose,
 }: {
     active: boolean;
-    source?: "nordea" | "local-ledger";
     embedded?: boolean;
-    initialFilter?: NordeaDrilldownFilter | null;
+    initialFilter?: LedgerDrilldownFilter | null;
     onClose?: () => void;
 }) {
-    const isLocalLedgerSource = source === "local-ledger";
-    const [data, setData] = useState<NordeaTransactionsResponse | null>(null);
-    const [taxonomy, setTaxonomy] = useState<NordeaTaxonomyResponse>({ categories: [], hashtags: [] });
+    const [data, setData] = useState<LedgerTransactionsResponse | null>(null);
+    const [taxonomy, setTaxonomy] = useState<LedgerTaxonomyResponse>({ categories: [], hashtags: [] });
     const availableCategories = taxonomy.categories;
     const [loading, setLoading] = useState(false);
     const [retrieving, setRetrieving] = useState(false);
@@ -1913,7 +1910,7 @@ export default function NordeaDashboard({
     const [retrieveProgress, setRetrieveProgress] = useState(0);
     const [retrieveExpectedMs, setRetrieveExpectedMs] = useState(120000);
     const [retrieveStartedAt, setRetrieveStartedAt] = useState<number | null>(null);
-    const [retrieveJobStatus, setRetrieveJobStatus] = useState<NordeaRetrieveJobStatus | null>(null);
+    const [retrieveJobStatus, setRetrieveJobStatus] = useState<LedgerRetrieveJobStatus | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [notice, setNotice] = useState<string | null>(null);
     const [spiirStatus, setSpiirStatus] = useState<SpiirStatusResponse | null>(null);
@@ -1921,12 +1918,12 @@ export default function NordeaDashboard({
     const [spiirOverview, setSpiirOverview] = useState<SpiirOverviewResponse | null>(null);
     const [spiirTransactions, setSpiirTransactions] = useState<SpiirTransaction[] | null>(null);
     const [sunburstState, setSunburstState] = useState<SunburstState>(null);
-    const [sunburstDrilldownModal, setSunburstDrilldownModal] = useState<NordeaDrilldownFilter | null>(null);
+    const [sunburstDrilldownModal, setSunburstDrilldownModal] = useState<LedgerDrilldownFilter | null>(null);
     const [periodFilter, setPeriodFilter] = useState<PeriodFilter>(initialFilter?.periodFilter ?? "all");
     const [customPeriodStart, setCustomPeriodStart] = useState(initialFilter?.periodStart ?? "");
     const [customPeriodEnd, setCustomPeriodEnd] = useState(initialFilter?.periodEnd ?? "");
     const [visibilityFilter, setVisibilityFilter] = useState<VisibilityFilter>(initialFilter?.visibilityFilter ?? "all");
-    const [categoryFilter, setCategoryFilter] = useState<NordeaCategoryOption | null>(initialFilter?.categoryFilter ?? null);
+    const [categoryFilter, setCategoryFilter] = useState<LedgerCategoryOption | null>(initialFilter?.categoryFilter ?? null);
     const [selectedAccountIbans, setSelectedAccountIbans] = useState<string[]>([]);
     const [accountFilterOpen, setAccountFilterOpen] = useState(false);
     const [showTransfersAlways, setShowTransfersAlways] = useState(true);
@@ -1966,17 +1963,14 @@ export default function NordeaDashboard({
     const saveQueueRef = useRef<Promise<unknown>>(Promise.resolve());
     const [editPanelTop, setEditPanelTop] = useState(0);
     const saving = pendingSaveCount > 0;
-    const editControlsDisabled = saving && !isLocalLedgerSource;
+    const editControlsDisabled = false;
 
-    async function loadTransactions(options?: { limit?: number; offset?: number }): Promise<NordeaTransactionsResponse> {
-        if (isLocalLedgerSource) {
-            return getSpiirLocalLedgerTransactionsPage(options);
-        }
-        return getNordeaTransactions();
+    async function loadTransactions(options?: { limit?: number; offset?: number }): Promise<LedgerTransactionsResponse> {
+        return getSpiirLocalLedgerTransactionsPage(options);
     }
 
     async function ensureAllTransactionsLoaded(): Promise<void> {
-        if (!isLocalLedgerSource || allTransactionsLoaded || data === null) {
+        if (allTransactionsLoaded || data === null) {
             return;
         }
         if (fetchAllPromiseRef.current !== null) {
@@ -2014,9 +2008,6 @@ export default function NordeaDashboard({
         setSearchResetKey((current) => current + 1);
         setMobilePendingOnly(false);
         setPage(1);
-        if (!isLocalLedgerSource) {
-            return;
-        }
         if (allTransactionsLoaded) {
             return;
         }
@@ -2038,7 +2029,7 @@ export default function NordeaDashboard({
     }
 
     async function handleLoadMoreTransactions(): Promise<void> {
-        if (!isLocalLedgerSource || data === null || allTransactionsLoaded || loadingMore) {
+        if (data === null || allTransactionsLoaded || loadingMore) {
             return;
         }
         setError(null);
@@ -2056,10 +2047,8 @@ export default function NordeaDashboard({
         setNotice(null);
         setLoading(true);
         try {
-            const transactionsPromise = isLocalLedgerSource
-                ? loadTransactions(localLedgerFirstPage(LOCAL_LEDGER_INITIAL_LIMIT))
-                : loadTransactions();
-            void getNordeaTaxonomy()
+            const transactionsPromise = loadTransactions(localLedgerFirstPage(LOCAL_LEDGER_INITIAL_LIMIT));
+            void getLedgerTaxonomy()
                 .then((nextTaxonomy) => {
                     if (requestId !== loadRequestIdRef.current) {
                         return;
@@ -2070,18 +2059,16 @@ export default function NordeaDashboard({
                     if (requestId !== loadRequestIdRef.current) {
                         return;
                     }
-                    setError(loadError instanceof Error ? loadError.message : "Kunne ikke hente Nordea metadata");
+                    setError(loadError instanceof Error ? loadError.message : "Kunne ikke hente kategorier");
                 });
             const loadedData = await transactionsPromise;
-            const nextData = isLocalLedgerSource
-                ? { ...loadedData, accounts: (await getNordeaTransactions()).accounts }
-                : loadedData;
+            const nextData = loadedData;
             if (requestId !== loadRequestIdRef.current) {
                 return;
             }
             setData(nextData);
-            setAllTransactionsLoaded(!isLocalLedgerSource || computeAllTransactionsLoaded(nextData));
-            void getNordeaRetrieveStatus()
+            setAllTransactionsLoaded(computeAllTransactionsLoaded(nextData));
+            void getLedgerRetrieveStatus()
                 .then(async (status) => {
                     if (requestId !== loadRequestIdRef.current) {
                         return;
@@ -2095,8 +2082,7 @@ export default function NordeaDashboard({
                 .catch(() => undefined);
 
             setLoading(false);
-            if (isLocalLedgerSource) {
-                void getSpiirStatus()
+            void getSpiirStatus()
                     .then((nextStatus) => {
                         if (requestId !== loadRequestIdRef.current) {
                             return;
@@ -2107,7 +2093,7 @@ export default function NordeaDashboard({
                         if (requestId !== loadRequestIdRef.current) {
                             return;
                         }
-                        setError(loadError instanceof Error ? loadError.message : "Kunne ikke hente Nordea metadata");
+                        setError(loadError instanceof Error ? loadError.message : "Kunne ikke hente status");
                     });
                 void getSpiirIncomeExpenseSeries()
                     .then((series) => {
@@ -2122,8 +2108,7 @@ export default function NordeaDashboard({
                         }
                         setError(loadError instanceof Error ? loadError.message : "Kunne ikke hente indkomst/udgifter");
                     });
-                return;
-            }
+            return;
         } catch (loadError) {
             setError(loadError instanceof Error ? loadError.message : "Kunne ikke hente transaktioner");
         } finally {
@@ -2153,7 +2138,7 @@ export default function NordeaDashboard({
         void scheduleSpiirRebuildFromLocal(delaySeconds).catch(() => undefined);
     }
 
-    function nordeaSyncNotice(syncResult: Pick<Awaited<ReturnType<typeof syncNordeaIntoSpiirLocalLedger>>, "created_count" | "autocategorized_count" | "updated_count">): string {
+    function bankSyncNotice(syncResult: NonNullable<LedgerRetrieveJobStatus["sync_result"]>): string {
         const parts = [];
         if (syncResult.created_count > 0) {
             parts.push(`${syncResult.created_count} nye pending`);
@@ -2165,12 +2150,12 @@ export default function NordeaDashboard({
             parts.push(`${syncResult.updated_count} opdaterede`);
         }
         if (parts.length === 0) {
-            return "Nordea-data er opdateret: ingen nye ændringer.";
+            return "Bankdata er opdateret: ingen nye ændringer.";
         }
-        return `Nordea-data er opdateret: ${parts.join(", ")}. Spiir opdateres automatisk i baggrunden.`;
+        return `Bankdata er opdateret: ${parts.join(", ")}. Spiir opdateres automatisk i baggrunden.`;
     }
 
-    function nordeaSyncChanged(syncResult: Pick<Awaited<ReturnType<typeof syncNordeaIntoSpiirLocalLedger>>, "created_count" | "autocategorized_count" | "updated_count"> | null | undefined): boolean {
+    function bankSyncChanged(syncResult: LedgerRetrieveJobStatus["sync_result"]): boolean {
         return Boolean(syncResult && (syncResult.created_count > 0 || syncResult.autocategorized_count > 0 || syncResult.updated_count > 0));
     }
 
@@ -2180,30 +2165,25 @@ export default function NordeaDashboard({
 
     async function reloadTransactionsAfterRetrieve(): Promise<void> {
         invalidateLocalLedgerCache();
-        const loaded = await loadTransactions(isLocalLedgerSource ? localLedgerFirstPage(LOCAL_LEDGER_INITIAL_LIMIT) : undefined);
-        const refreshed = isLocalLedgerSource
-            ? { ...loaded, accounts: (await getNordeaTransactions()).accounts }
-            : loaded;
+        const refreshed = await loadTransactions(localLedgerFirstPage(LOCAL_LEDGER_INITIAL_LIMIT));
         setData(refreshed);
-        if (isLocalLedgerSource) {
-            setAllTransactionsLoaded(computeAllTransactionsLoaded(refreshed));
-        }
+        setAllTransactionsLoaded(computeAllTransactionsLoaded(refreshed));
     }
 
-    async function pollNordeaRetrieveJob(): Promise<NordeaRetrieveJobStatus> {
+    async function pollLedgerRetrieveJob(): Promise<LedgerRetrieveJobStatus> {
         for (let attempt = 0; attempt < 180; attempt += 1) {
-            const status = await getNordeaRetrieveStatus();
+            const status = await getLedgerRetrieveStatus();
             setRetrieveJobStatus(status);
             setRetrieveProgress(Math.max(0, Math.min(100, status.progress)));
             if (status.status === "succeeded") {
                 return status;
             }
             if (status.status === "failed") {
-                throw new Error(status.error || "Nordea-hentning fejlede");
+                throw new Error(status.error || "Hentning fra banken fejlede");
             }
             await wait(1500);
         }
-        throw new Error("Nordea-hentning tager længere end forventet. Åbn siden igen om lidt for status.");
+        throw new Error("Hentning fra banken tager længere end forventet. Åbn siden igen om lidt for status.");
     }
 
     async function handleRetrieve(): Promise<void> {
@@ -2217,28 +2197,28 @@ export default function NordeaDashboard({
         setRetrieveJobStatus(null);
         setRetrieving(true);
         try {
-            setRetrieveJobStatus(await startNordeaRetrieveJob());
-            const completedStatus = await pollNordeaRetrieveJob();
+            setRetrieveJobStatus(await startLedgerRetrieveJob());
+            const completedStatus = await pollLedgerRetrieveJob();
             await reloadTransactionsAfterRetrieve();
             invalidateSpiirCache();
-            if (isLocalLedgerSource && nordeaSyncChanged(completedStatus.sync_result)) {
+            if (bankSyncChanged(completedStatus.sync_result)) {
                 markSpiirRebuildRequired("nordea_sync");
                 scheduleSpiirRebuild();
             }
             if (completedStatus.sync_result) {
-                setNotice(nordeaSyncNotice(completedStatus.sync_result));
+                setNotice(bankSyncNotice(completedStatus.sync_result));
             } else {
-                setNotice("Nordea-data er opdateret.");
+                setNotice("Bankdata er opdateret.");
             }
         } catch (retrieveError) {
-            setError(retrieveError instanceof Error ? retrieveError.message : "Kunne ikke hente fra Nordea");
+            setError(retrieveError instanceof Error ? retrieveError.message : "Kunne ikke hente fra banken");
         } finally {
             setRetrieving(false);
         }
     }
 
     async function handleAcknowledgePending(): Promise<void> {
-        if (!isLocalLedgerSource || pendingParentIds.length === 0) {
+        if (pendingParentIds.length === 0) {
             return;
         }
         if (!window.confirm(`Marker ${pendingParentIds.length} pending poster som gennemgået?`)) {
@@ -2254,9 +2234,6 @@ export default function NordeaDashboard({
     }
 
     async function handleBuildSpiir(): Promise<void> {
-        if (!isLocalLedgerSource) {
-            return;
-        }
         setError(null);
         setNotice(null);
         setBuildingSpiir(true);
@@ -2276,14 +2253,10 @@ export default function NordeaDashboard({
         try {
             for (let attempt = 0; attempt < 12; attempt += 1) {
                 await new Promise((resolve) => window.setTimeout(resolve, 5000));
-                const latest = isLocalLedgerSource
-                    ? await loadTransactions(localLedgerFirstPage(LOCAL_LEDGER_INITIAL_LIMIT))
-                    : await loadTransactions();
+                const latest = await loadTransactions(localLedgerFirstPage(LOCAL_LEDGER_INITIAL_LIMIT));
                 if ((latest.last_retrieved_at ?? null) !== previousLastRetrievedAt) {
                     setData(latest);
-                    if (isLocalLedgerSource) {
-                        setAllTransactionsLoaded(computeAllTransactionsLoaded(latest));
-                    }
+                    setAllTransactionsLoaded(computeAllTransactionsLoaded(latest));
                     setError(null);
                     setNotice("Hentning blev færdig i baggrunden. Listen er opdateret.");
                     return;
@@ -2323,21 +2296,16 @@ export default function NordeaDashboard({
         return run;
     }
 
-    function savePatch(transactionIds: string[], patch: NordeaOverridePatch): Promise<boolean> {
+    function savePatch(transactionIds: string[], patch: LedgerOverridePatch): Promise<boolean> {
         setError(null);
         return enqueueSave(async () => {
             try {
-                if (isLocalLedgerSource) {
-                    const result = await saveSpiirLocalLedgerOverrides(transactionIds, patch);
-                    markSpiirRebuildRequired("local_ledger_override");
-                    setData((current) => mergeUpdatedTransactions(current, result.updated_transactions, result.deleted_transaction_ids));
-                } else {
-                    await saveNordeaOverrides(transactionIds, patch);
-                    setData(await loadTransactions());
-                }
+                const result = await saveSpiirLocalLedgerOverrides(transactionIds, patch);
+                markSpiirRebuildRequired("local_ledger_override");
+                setData((current) => mergeUpdatedTransactions(current, result.updated_transactions, result.deleted_transaction_ids));
                 return true;
             } catch (saveError) {
-                setError(saveError instanceof Error ? saveError.message : "Kunne ikke gemme Nordea-ændring");
+                setError(saveError instanceof Error ? saveError.message : "Kunne ikke gemme ændringen");
                 return false;
             }
         });
@@ -2364,7 +2332,7 @@ export default function NordeaDashboard({
         }
     }, [active, data, loading]);
 
-    const requiresAllTransactions = isLocalLedgerSource && (
+    const requiresAllTransactions = (
         embedded
         ||
         searchText.trim().length > 0
@@ -2384,11 +2352,11 @@ export default function NordeaDashboard({
     }, [active, requiresAllTransactions, allTransactionsLoaded, data, loadingMore]);
 
     useEffect(() => {
-        if (!active || !isLocalLedgerSource || allTransactionsLoaded || data === null || loading || loadingMore) {
+        if (!active || allTransactionsLoaded || data === null || loading || loadingMore) {
             return;
         }
         void ensureAllTransactionsLoaded();
-    }, [active, allTransactionsLoaded, data, isLocalLedgerSource, loading, loadingMore]);
+    }, [active, allTransactionsLoaded, data, loading, loadingMore]);
 
     useEffect(() => {
         if (active && !embedded) {
@@ -2437,7 +2405,7 @@ export default function NordeaDashboard({
         return { months, years };
     }, [transactions]);
     const categoryFilterOptions = useMemo(() => {
-        const byMain = new Map<string, { mainName: string; categories: NordeaCategoryOption[] }>();
+        const byMain = new Map<string, { mainName: string; categories: LedgerCategoryOption[] }>();
         availableCategories.forEach((category) => {
             const mainId = categoryMainId(category);
             const current = byMain.get(mainId) ?? {
@@ -2829,7 +2797,7 @@ export default function NordeaDashboard({
         return () => document.removeEventListener("keydown", handleDocumentKeyDown);
     }, [active, isMobileLayout, selectedIds, splitModalOpen, sunburstDrilldownModal, visibilityPanelOpen, visibleRowIds]);
 
-    function transactionWithCategory(transaction: NordeaTransaction, category: NordeaCategoryOption): NordeaTransaction {
+    function transactionWithCategory(transaction: LedgerTransaction, category: LedgerCategoryOption): LedgerTransaction {
         return {
             ...transaction,
             pending_review: false,
@@ -2841,7 +2809,7 @@ export default function NordeaDashboard({
         };
     }
 
-    function transactionWithHashtag(transaction: NordeaTransaction, hashtag: string, checked: boolean): NordeaTransaction {
+    function transactionWithHashtag(transaction: LedgerTransaction, hashtag: string, checked: boolean): LedgerTransaction {
         const normalizedTag = normalizeHashtag(hashtag);
         if (!normalizedTag) {
             return transaction;
@@ -2872,7 +2840,7 @@ export default function NordeaDashboard({
         };
     }
 
-    function saveBulkCategory(category: NordeaCategoryOption): void {
+    function saveBulkCategory(category: LedgerCategoryOption): void {
         const parentIds = selectedParentIds;
         const parentIdSet = new Set(parentIds);
         setData((current) => {
@@ -2887,12 +2855,12 @@ export default function NordeaDashboard({
         void savePatch(parentIds, { category, pending_review: false });
     }
 
-    function initialSplitCategory(transaction: NordeaTransaction): NordeaCategoryOption | null {
+    function initialSplitCategory(transaction: LedgerTransaction): LedgerCategoryOption | null {
         const category = categoryFromTransaction(transaction);
         return isUncategorizedCategory(category) ? null : category;
     }
 
-    function splitRowsForTransaction(transaction: NordeaTransaction): NordeaTransaction[] {
+    function splitRowsForTransaction(transaction: LedgerTransaction): LedgerTransaction[] {
         const groupId = transaction.split_group_id?.trim();
         if (!groupId) {
             return [transaction];
@@ -2907,11 +2875,11 @@ export default function NordeaDashboard({
         return groupRows.length > 0 ? groupRows : [transaction];
     }
 
-    function splitTotalAmount(transaction: NordeaTransaction): number {
+    function splitTotalAmount(transaction: LedgerTransaction): number {
         return splitRowsForTransaction(transaction).reduce((total, item) => total + item.amount, 0);
     }
 
-    function splitDisplayMultiplier(transaction: NordeaTransaction): number {
+    function splitDisplayMultiplier(transaction: LedgerTransaction): number {
         return splitTotalAmount(transaction) >= 0 ? 1 : -1;
     }
 
@@ -2964,7 +2932,7 @@ export default function NordeaDashboard({
             return;
         }
         const multiplier = splitDisplayMultiplier(selectedTransaction);
-        const payload: NordeaSplitLine[] = splitLines.map((line) => ({
+        const payload: LedgerSplitLine[] = splitLines.map((line) => ({
             id: line.id,
             amount: roundAmount(line.amount * multiplier),
             note: line.note,
@@ -2988,7 +2956,7 @@ export default function NordeaDashboard({
         }
     }
 
-    function saveRowCategory(row: NordeaDisplayRow, category: NordeaCategoryOption, selectNext = false): void {
+    function saveRowCategory(row: LedgerDisplayRow, category: LedgerCategoryOption, selectNext = false): void {
         if (row.isSplitChild && row.splitIndex !== null && hasEmbeddedSplit(row.transaction)) {
             const nextSplits = (row.transaction.splits ?? []).map((split, index) => index === row.splitIndex ? { ...split, category } : split);
             setData((current) => {
@@ -3030,7 +2998,7 @@ export default function NordeaDashboard({
         }
     }
 
-    function saveRowNote(row: NordeaDisplayRow, note: string): void {
+    function saveRowNote(row: LedgerDisplayRow, note: string): void {
         const nextHashtags = extractedHashtags(note);
         if (row.isSplitChild && row.splitIndex !== null && hasEmbeddedSplit(row.transaction)) {
             const nextSplits = (row.transaction.splits ?? []).map((split, index) => index === row.splitIndex ? { ...split, note } : split);
@@ -3067,7 +3035,7 @@ export default function NordeaDashboard({
         void savePatch([row.parentId], { note });
     }
 
-    function openMobileRow(row: NordeaDisplayRow, focusCategoryInput = false): void {
+    function openMobileRow(row: LedgerDisplayRow, focusCategoryInput = false): void {
         let opening = false;
         flushSync(() => {
             setExpandedMobileRowId((current) => {
@@ -3083,14 +3051,14 @@ export default function NordeaDashboard({
         input?.select();
     }
 
-    function closeMobileRow(row: NordeaDisplayRow, note: string): void {
+    function closeMobileRow(row: LedgerDisplayRow, note: string): void {
         if (note !== row.note) {
             saveRowNote(row, note);
         }
         setExpandedMobileRowId(null);
     }
 
-    function openMobileSplit(row: NordeaDisplayRow): void {
+    function openMobileSplit(row: LedgerDisplayRow): void {
         setSelectedIds([row.rowId]);
         lastSelectedRowIdRef.current = row.rowId;
         setExpandedMobileRowId(row.rowId);
@@ -3107,7 +3075,7 @@ export default function NordeaDashboard({
         setSortDirection(nextSortKey === "booking_date" || nextSortKey === "amount" ? "desc" : "asc");
     }
 
-    function openSplitModal(transaction: NordeaTransaction): void {
+    function openSplitModal(transaction: LedgerTransaction): void {
         const groupRows = splitRowsForTransaction(transaction);
         const parentAmount = Math.abs(splitTotalAmount(transaction));
         const multiplier = splitDisplayMultiplier(transaction);
@@ -3179,25 +3147,17 @@ export default function NordeaDashboard({
     const allVisibleSelected = visibleTransactions.length > 0 && visibleTransactions.every((row) => selectedIds.includes(row.rowId));
     const splitSaveDisabled = saving || splitLines.length === 0 || splitLines.some((line) => !line.category || !Number.isFinite(line.amount) || Math.abs(line.amount) < 0.005);
     const visibilityButtonLabel = visibilityLabel(visibilityFilter, categoryFilter?.categoryName ?? "");
-    const spiirNeedsRebuild = Boolean(isLocalLedgerSource && spiirStatus?.rebuild_required);
+    const spiirNeedsRebuild = Boolean(spiirStatus?.rebuild_required);
 
     return (
         <section className={embedded ? "nordea-poster nordea-poster-embedded" : "nordea-poster"}>
             {embedded ? (
                 <header className="nordea-embedded-header">
                     <div>
-                        <p className="eyebrow">Nordea</p>
+                        <p className="eyebrow">Poster</p>
                         <h2>{initialFilter?.title ?? "Poster"}</h2>
                     </div>
                     {onClose ? <button type="button" className="secondary-button" onClick={onClose}>Luk</button> : null}
-                </header>
-            ) : null}
-            {!isLocalLedgerSource ? (
-                <header className="nordea-poster-header">
-                    <div>
-                        <h2>Nordea</h2>
-                        <span>{data?.last_retrieved_at ? `Senest hentet ${formatDateTime(data.last_retrieved_at)}` : "Rå transaktioner fra Enable Banking"}</span>
-                    </div>
                 </header>
             ) : null}
             {error ? <p className="error-banner">{error}</p> : null}
@@ -3206,7 +3166,7 @@ export default function NordeaDashboard({
                     <p className="nordea-retrieve-panel-title">
                         {retrieveChecking
                             ? "Tjekker om hentning blev færdig i baggrunden..."
-                            : retrieveJobStatus?.current_phase || "Henter seneste transaktioner fra Nordea..."}
+                            : retrieveJobStatus?.current_phase || "Henter seneste transaktioner fra banken..."}
                     </p>
                     <div className="nordea-retrieve-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={retrieveProgress}>
                         <span className="nordea-retrieve-progress-fill" style={{ width: `${retrieveProgress}%` }} />
@@ -3218,7 +3178,7 @@ export default function NordeaDashboard({
                 </section>
             ) : null}
             {notice ? <p className="info-banner">{notice}</p> : null}
-            {isLocalLedgerSource && !embedded ? <IncomeExpenseOverview series={incomeExpenseSeries} onOpenSunburst={(month) => void openIncomeExpenseSunburst(month)} /> : null}
+            {!embedded ? <IncomeExpenseOverview series={incomeExpenseSeries} onOpenSunburst={(month) => void openIncomeExpenseSunburst(month)} /> : null}
             {accounts.length > 0 ? (
                 <section className="account-filter-panel" aria-label="Account filter">
                     <button
@@ -3300,21 +3260,19 @@ export default function NordeaDashboard({
                                 <SearchField value={searchText} resetKey={searchResetKey} onCommit={setSearchText} onClear={resetSearchToLatest} />
                             </div>
                             <div className="nordea-spiir-filter-actions">
-                                {isLocalLedgerSource && saving ? (
+                                {saving ? (
                                     <span className="nordea-save-indicator" aria-live="polite">
                                         <span className="nordea-saving-spinner" aria-hidden="true" />
                                         Gemmer
                                     </span>
                                 ) : null}
-                                {isLocalLedgerSource ? (
-                                    <button
-                                        type="button"
-                                        onClick={() => void handleBuildSpiir()}
-                                        disabled={retrieving || retrieveChecking || saving || buildingSpiir || !spiirNeedsRebuild}
-                                    >
-                                        {buildingSpiir ? "Bygger..." : "Byg Spiir"}
-                                    </button>
-                                ) : null}
+                                <button
+                                    type="button"
+                                    onClick={() => void handleBuildSpiir()}
+                                    disabled={retrieving || retrieveChecking || saving || buildingSpiir || !spiirNeedsRebuild}
+                                >
+                                    {buildingSpiir ? "Bygger..." : "Byg Spiir"}
+                                </button>
                                 <button
                                     type="button"
                                     onClick={() => void handleRetrieve()}
@@ -3439,7 +3397,7 @@ export default function NordeaDashboard({
                 {!isMobileLayout ? <div className="nordea-pagination-bar">
                     <span>{filteredTransactions.length === 0 ? "0 poster" : `${firstVisible}-${lastVisible} af ${filteredTransactions.length}`}</span>
                     <div>
-                        {isLocalLedgerSource && !allTransactionsLoaded ? (
+                        {!allTransactionsLoaded ? (
                             <button
                                 type="button"
                                 className="secondary-button"
@@ -3459,7 +3417,7 @@ export default function NordeaDashboard({
                     </div>
                 </div> : null}
             </section>
-            {isMobileLayout ? <section className="nordea-mobile-review-list" aria-label="Nordea poster">
+            {isMobileLayout ? <section className="nordea-mobile-review-list" aria-label="Poster">
                 {visibleMobileTransactions.map((row) => {
                     const expanded = expandedMobileRowId === row.rowId;
                     return (
@@ -3477,7 +3435,7 @@ export default function NordeaDashboard({
                         />
                     );
                 })}
-                {!loading && mobileTransactions.length === 0 ? <p className="nordea-mobile-empty">Ingen Nordea-poster matcher filteret.</p> : null}
+                {!loading && mobileTransactions.length === 0 ? <p className="nordea-mobile-empty">Ingen poster matcher filteret.</p> : null}
                 {mobileRenderLimit < mobileTransactions.length ? (
                     <div className="nordea-mobile-load-more-sentinel" ref={mobileLoadMoreRef}>
                         <button
@@ -3489,7 +3447,7 @@ export default function NordeaDashboard({
                         </button>
                     </div>
                 ) : null}
-                {isLocalLedgerSource && !allTransactionsLoaded ? (
+                {!allTransactionsLoaded ? (
                     <button
                         type="button"
                         className="nordea-mobile-load-more"
@@ -3548,7 +3506,7 @@ export default function NordeaDashboard({
                                         key={row.rowId}
                                         data-row-id={row.rowId}
                                         title={detailTitle(row.transaction)}
-                                        className={nordeaRowClassName(row, selected, selectedIds.length)}
+                                        className={ledgerRowClassName(row, selected, selectedIds.length)}
                                         onClick={(event) => {
                                             if (event.metaKey || event.shiftKey) {
                                                 event.preventDefault();
@@ -3594,7 +3552,7 @@ export default function NordeaDashboard({
                             })}
                             {!loading && filteredTransactions.length === 0 ? (
                                 <tr>
-                                    <td colSpan={7}>Ingen Nordea-transaktioner matcher filteret.</td>
+                                    <td colSpan={7}>Ingen transaktioner matcher filteret.</td>
                                 </tr>
                             ) : null}
                         </tbody>
@@ -3744,10 +3702,9 @@ export default function NordeaDashboard({
             {sunburstDrilldownModal ? (
                 <div className="modal-backdrop" onClick={() => setSunburstDrilldownModal(null)}>
                     <section className="nordea-drilldown-modal" onClick={(event) => event.stopPropagation()}>
-                        <NordeaDashboard
+                        <LedgerDashboard
                             key={`${sunburstDrilldownModal.title}|${sunburstDrilldownModal.periodFilter ?? "all"}|${sunburstDrilldownModal.categoryFilter?.categoryId ?? ""}|${sunburstDrilldownModal.searchText ?? ""}`}
                             active
-                            source="local-ledger"
                             embedded
                             initialFilter={sunburstDrilldownModal}
                             onClose={() => setSunburstDrilldownModal(null)}

@@ -1,12 +1,12 @@
 import { Suspense, lazy, useEffect, useState } from "react";
 
-const NordeaDashboard = lazy(() => import("./NordeaDashboard"));
+const LedgerDashboard = lazy(() => import("./LedgerDashboard"));
 const SpiirDashboard = lazy(() => import("./SpiirDashboard"));
 
-type Tab = "nordea" | "spiir";
+type Tab = "ledger" | "spiir";
 
 export default function ReferenceApp() {
-    const [tab, setTab] = useState<Tab>("nordea");
+    const [tab, setTab] = useState<Tab>("ledger");
     const [darkMode, setDarkMode] = useState(() => window.localStorage.getItem("spiir-theme") === "dark");
 
     useEffect(() => {
@@ -14,13 +14,13 @@ export default function ReferenceApp() {
         document.documentElement.dataset.theme = darkMode ? "dark" : "light";
     }, [darkMode]);
 
-    return <main className={`${tab === "nordea" ? "app-mode-nordea" : "app-shell app-shell-wide"} ${darkMode ? "theme-dark" : ""}`}>
+    return <main className={`${tab === "ledger" ? "app-mode-nordea" : "app-shell app-shell-wide"} ${darkMode ? "theme-dark" : ""}`}>
         <nav className="top-nav-panel" aria-label="Reference navigation">
             <div className="top-nav-start">
                 <strong>Spiir alternative</strong>
             </div>
             <div className="top-nav-controls">
-                <button type="button" className={tab === "nordea" ? "nav-pill active" : "nav-pill"} onClick={() => setTab("nordea")}>Nordea ledger</button>
+                <button type="button" className={tab === "ledger" ? "nav-pill active" : "nav-pill"} onClick={() => setTab("ledger")}>Poster</button>
                 <button type="button" className={tab === "spiir" ? "nav-pill active" : "nav-pill"} onClick={() => setTab("spiir")}>Overview</button>
                 {tab === "spiir" ? <div id="spiir-header-controls" className="top-nav-spiir-controls" /> : null}
             </div>
@@ -32,7 +32,7 @@ export default function ReferenceApp() {
             </div>
         </nav>
         <Suspense fallback={<div className="panel">Loading...</div>}>
-            {tab === "nordea" ? <NordeaDashboard active={true} source="local-ledger" /> : null}
+            {tab === "ledger" ? <LedgerDashboard active={true} /> : null}
             {tab === "spiir" ? <SpiirDashboard active={true} /> : null}
         </Suspense>
     </main>;

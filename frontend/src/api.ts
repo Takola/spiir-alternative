@@ -1,18 +1,15 @@
-import { mergeUpdatedTransactions } from "./nordeaState";
+import { mergeUpdatedTransactions } from "./ledgerState";
 import type {
-    NordeaOverridePatch,
-    NordeaOverrideResponse,
-    NordeaRetrieveJobStatus,
-    NordeaRetrieveResponse,
-    NordeaTaxonomyResponse,
-    NordeaTransactionsResponse,
+    LedgerOverridePatch,
+    LedgerOverrideResponse,
+    LedgerRetrieveJobStatus,
+    LedgerTaxonomyResponse,
+    LedgerTransactionsResponse,
     SpiirIncomeExpenseSeriesResponse,
     SpiirOverviewResponse,
     SpiirStatusResponse,
     SpiirTransaction
 } from "./types";
-
-const API_BASE = window.location.origin.startsWith("http") ? "" : "";
 
 type CacheSlot<T> = {
     value: T | null;
@@ -27,8 +24,8 @@ const spiirCache = {
 };
 
 const localLedgerCache = {
-    full: { value: null, promise: null } as CacheSlot<NordeaTransactionsResponse>,
-    pages: new Map<string, CacheSlot<NordeaTransactionsResponse>>()
+    full: { value: null, promise: null } as CacheSlot<LedgerTransactionsResponse>,
+    pages: new Map<string, CacheSlot<LedgerTransactionsResponse>>()
 };
 
 function cachedRequest<T>(slot: CacheSlot<T>, loader: () => Promise<T>): Promise<T> {
@@ -82,18 +79,18 @@ function localLedgerPageKey(options?: { limit?: number; offset?: number }): stri
     return `${options?.offset ?? 0}:${options?.limit ?? "all"}`;
 }
 
-function localLedgerPageSlot(options?: { limit?: number; offset?: number }): CacheSlot<NordeaTransactionsResponse> {
+function localLedgerPageSlot(options?: { limit?: number; offset?: number }): CacheSlot<LedgerTransactionsResponse> {
     const key = localLedgerPageKey(options);
     const existing = localLedgerCache.pages.get(key);
     if (existing) {
         return existing;
     }
-    const slot = { value: null, promise: null } as CacheSlot<NordeaTransactionsResponse>;
+    const slot = { value: null, promise: null } as CacheSlot<LedgerTransactionsResponse>;
     localLedgerCache.pages.set(key, slot);
     return slot;
 }
 
-function sliceLocalLedgerResponse(payload: NordeaTransactionsResponse, options?: { limit?: number; offset?: number }): NordeaTransactionsResponse {
+function sliceLocalLedgerResponse(payload: LedgerTransactionsResponse, options?: { limit?: number; offset?: number }): LedgerTransactionsResponse {
     const offset = Math.max(options?.offset ?? 0, 0);
     const limit = options?.limit ?? null;
     const transactions = limit === null
@@ -109,7 +106,7 @@ function sliceLocalLedgerResponse(payload: NordeaTransactionsResponse, options?:
     };
 }
 
-function patchLocalLedgerCache(result: NordeaOverrideResponse): void {
+function patchLocalLedgerCache(result: LedgerOverrideResponse): void {
     localLedgerCache.full.value = mergeUpdatedTransactions(
         localLedgerCache.full.value,
         result.updated_transactions,
@@ -121,7 +118,7 @@ function patchLocalLedgerCache(result: NordeaOverrideResponse): void {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-    const response = await fetch(`${API_BASE}${path}`, {
+    const response = await fetch(path, {
         credentials: "include",
         ...init
     });
@@ -184,15 +181,11 @@ export async function scheduleSpiirRebuildFromLocal(delaySeconds = 10): Promise<
     });
 }
 
-export async function getNordeaTransactions(): Promise<NordeaTransactionsResponse> {
-    return request<NordeaTransactionsResponse>("/api/nordea/transactions");
+export async function getSpiirLocalLedgerTransactions(): Promise<LedgerTransactionsResponse> {
+    return cachedRequest(localLedgerCache.full, () => request<LedgerTransactionsResponse>("/api/spiir/local-ledger/transactions"));
 }
 
-export async function getSpiirLocalLedgerTransactions(): Promise<NordeaTransactionsResponse> {
-    return cachedRequest(localLedgerCache.full, () => request<NordeaTransactionsResponse>("/api/spiir/local-ledger/transactions"));
-}
-
-export async function getSpiirLocalLedgerTransactionsPage(options?: { limit?: number; offset?: number }): Promise<NordeaTransactionsResponse> {
+export async function getSpiirLocalLedgerTransactionsPage(options?: { limit?: number; offset?: number }): Promise<LedgerTransactionsResponse> {
     if (options?.limit === undefined && options?.offset === undefined) {
         return getSpiirLocalLedgerTransactions();
     }
@@ -207,11 +200,11 @@ export async function getSpiirLocalLedgerTransactionsPage(options?: { limit?: nu
         params.set("offset", String(options.offset));
     }
     const suffix = params.toString() ? `?${params.toString()}` : "";
-    return cachedRequest(localLedgerPageSlot(options), () => request<NordeaTransactionsResponse>(`/api/spiir/local-ledger/transactions${suffix}`));
+    return cachedRequest(localLedgerPageSlot(options), () => request<LedgerTransactionsResponse>(`/api/spiir/local-ledger/transactions${suffix}`));
 }
 
-export async function saveSpiirLocalLedgerOverrides(transactionIds: string[], patch: NordeaOverridePatch): Promise<NordeaOverrideResponse> {
-    const result = await request<NordeaOverrideResponse>("/api/spiir/local-ledger/overrides", {
+export async function saveSpiirLocalLedgerOverrides(transactionIds: string[], patch: LedgerOverridePatch): Promise<LedgerOverrideResponse> {
+    const result = await request<LedgerOverrideResponse>("/api/spiir/local-ledger/overrides", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ transaction_ids: transactionIds, patch })
@@ -220,55 +213,15 @@ export async function saveSpiirLocalLedgerOverrides(transactionIds: string[], pa
     return result;
 }
 
-export async function retrieveNordeaTransactions(): Promise<NordeaRetrieveResponse> {
-    return request<NordeaRetrieveResponse>("/api/nordea/retrieve", { method: "POST" });
+export async function startLedgerRetrieveJob(): Promise<LedgerRetrieveJobStatus> {
+    return request<LedgerRetrieveJobStatus>("/api/bank/retrieve/start", { method: "POST" });
 }
 
-export async function startNordeaRetrieveJob(): Promise<NordeaRetrieveJobStatus> {
-    return request<NordeaRetrieveJobStatus>("/api/nordea/retrieve/start", { method: "POST" });
+export async function getLedgerRetrieveStatus(): Promise<LedgerRetrieveJobStatus> {
+    return request<LedgerRetrieveJobStatus>("/api/bank/retrieve/status");
 }
 
-export async function getNordeaRetrieveStatus(): Promise<NordeaRetrieveJobStatus> {
-    return request<NordeaRetrieveJobStatus>("/api/nordea/retrieve/status");
-}
-
-export async function syncNordeaIntoSpiirLocalLedger(): Promise<{
-    applied_at: string;
-    cutover_date: string;
-    source_row_count: number;
-    created_count: number;
-    updated_count: number;
-    autocategorized_count: number;
-    skipped_before_cutover_count: number;
-    skipped_missing_booking_date_count: number;
-    ledger_row_count: number;
-    import_run_count: number;
-}> {
-    const result = await request<{
-        applied_at: string;
-        cutover_date: string;
-        source_row_count: number;
-        created_count: number;
-        updated_count: number;
-        autocategorized_count: number;
-        skipped_before_cutover_count: number;
-        skipped_missing_booking_date_count: number;
-        ledger_row_count: number;
-        import_run_count: number;
-    }>("/api/spiir/local-ledger/nordea-sync/apply", { method: "POST" });
-    invalidateLocalLedgerCache();
-    return result;
-}
-
-export async function getNordeaTaxonomy(): Promise<NordeaTaxonomyResponse> {
-    return request<NordeaTaxonomyResponse>("/api/nordea/taxonomy");
-}
-
-export async function saveNordeaOverrides(transactionIds: string[], patch: NordeaOverridePatch): Promise<NordeaOverrideResponse> {
-    return request<NordeaOverrideResponse>("/api/nordea/overrides", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transaction_ids: transactionIds, patch })
-    });
+export async function getLedgerTaxonomy(): Promise<LedgerTaxonomyResponse> {
+    return request<LedgerTaxonomyResponse>("/api/ledger/taxonomy");
 }
 

@@ -1,4 +1,4 @@
-import type { NordeaTransaction, NordeaTransactionsResponse } from "./types";
+import type { LedgerTransaction, LedgerTransactionsResponse } from "./types";
 
 export type TransactionPageOptions = {
     limit: number;
@@ -12,15 +12,15 @@ export function localLedgerFirstPage(limit: number): TransactionPageOptions {
     };
 }
 
-export function computeAllTransactionsLoaded(payload: NordeaTransactionsResponse): boolean {
+export function computeAllTransactionsLoaded(payload: LedgerTransactionsResponse): boolean {
     return !payload.has_more || payload.transactions.length >= payload.transaction_count;
 }
 
 export function mergeUpdatedTransactions(
-    current: NordeaTransactionsResponse | null,
-    updatedTransactions: NordeaTransaction[] | undefined,
+    current: LedgerTransactionsResponse | null,
+    updatedTransactions: LedgerTransaction[] | undefined,
     deletedTransactionIds?: string[],
-): NordeaTransactionsResponse | null {
+): LedgerTransactionsResponse | null {
     if (current === null) {
         return current;
     }
