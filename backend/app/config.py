@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -8,6 +9,22 @@ from dotenv import load_dotenv
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 load_dotenv(ROOT_DIR / ".env", override=False)
+
+
+def _expand_legacy_dotenv_value(value: str) -> str:
+    """Accept the old shell-style .env template on Windows during migration."""
+    replacements = {"PWD": str(ROOT_DIR)}
+    replacements.update({name: os.environ.get(name, "") for name in ("ENABLEBANKING_APP_ID",)})
+
+    def replace(match: re.Match[str]) -> str:
+        return replacements.get(match.group(1) or match.group(2), match.group(0))
+
+    return re.sub(r"\$([A-Za-z_][A-Za-z0-9_]*)|\$\{([A-Za-z_][A-Za-z0-9_]*)\}", replace, value)
+
+
+for _path_env_name in ("SPIIR_ALT_DATA_DIR", "ENABLEBANKING_PRIVATE_KEY_PATH"):
+    if _path_env_value := os.getenv(_path_env_name):
+        os.environ[_path_env_name] = _expand_legacy_dotenv_value(_path_env_value)
 
 
 @dataclass(frozen=True)
