@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Plot from "react-plotly.js";
 
+import { formatIsoDate, formatWholeNumber } from "./formatting";
 import type { SpiirOverviewRow, SpiirTransaction } from "./types";
 
 export type SunburstMode = "months" | "years";
@@ -34,15 +35,11 @@ type SpiirSunburstModalProps = {
 };
 
 function formatNumber(value: number | null | undefined): string {
-    if (value === null || value === undefined || Number.isNaN(value)) {
-        return "";
-    }
-    return new Intl.NumberFormat("da-DK", { maximumFractionDigits: 0 }).format(value);
+    return formatWholeNumber(value);
 }
 
 function formatTxDate(value: string): string {
-    const [year, month, day] = value.split("-");
-    return `${day}/${month}/${year}`;
+    return formatIsoDate(value, "/");
 }
 
 function truncateText(value: string | null | undefined, maxLength: number): string {

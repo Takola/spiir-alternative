@@ -10,6 +10,7 @@ import {
     rebuildSpiirFromLocal,
     scheduleSpiirRebuildFromLocal
 } from "./api";
+import { formatOneDecimal, formatWholeDkk, formatWholeNumber } from "./formatting";
 import LedgerDashboard, { type LedgerDrilldownFilter } from "./LedgerDashboard";
 import SpiirSunburstModal, { expenseMainColorFromHue, expenseSubColorFromHue, incomePartColorFromHue, type SunburstMode, type SunburstState } from "./SpiirSunburstModal";
 import type {
@@ -85,10 +86,7 @@ function storeBool(key: string, value: boolean): void {
 }
 
 function formatNumber(value: number | null | undefined): string {
-    if (value === null || value === undefined || Number.isNaN(value)) {
-        return "";
-    }
-    return new Intl.NumberFormat("da-DK", { maximumFractionDigits: 0 }).format(value);
+    return formatWholeNumber(value);
 }
 
 function hasChildren(rows: SpiirOverviewRow[], key: string): boolean {
@@ -891,14 +889,14 @@ function businessDelta(current: number, previous: number): number | null {
 }
 
 function formatBusinessValue(value: number): string {
-    return `${new Intl.NumberFormat("da-DK", { maximumFractionDigits: 0 }).format(value)} kr`;
+    return formatWholeDkk(value);
 }
 
 function formatBusinessDelta(value: number | null): string {
     if (value === null || !Number.isFinite(value)) {
         return "No prior baseline";
     }
-    return `${value >= 0 ? "+" : ""}${new Intl.NumberFormat("da-DK", { maximumFractionDigits: 1 }).format(value)}% vs prior year`;
+    return `${value >= 0 ? "+" : ""}${formatOneDecimal(value)}% vs prior year`;
 }
 
 type SpendingSource = {
@@ -1174,7 +1172,7 @@ function BusinessReview({
         .map((step) => step.value === 0 && (step.key === "diff" || step.key === "cashflow")
             ? step.key === "diff" ? currentOperatingSurplus : currentNet
             : step.value)
-        .map((value) => new Intl.NumberFormat("da-DK", { maximumFractionDigits: 0 }).format(value));
+        .map((value) => formatWholeNumber(value));
     const spendingSources = useMemo(
         () => buildSpendingSources(transactions, reportingCurrentPeriods, reportingPreviousPeriods, spendingCategory, spendingSubcategory),
         [reportingCurrentPeriods.join("|"), reportingPreviousPeriods.join("|"), spendingCategory, spendingSubcategory, transactions],
@@ -1242,7 +1240,7 @@ function BusinessReview({
                     <span>Cash after investing</span><strong>{formatBusinessValue(summaryValue(currentNet))}</strong><small>{summarySuffix} · {formatBusinessDelta(businessDelta(currentNet, previousNet))}</small>
                 </button>
                 <div className="business-kpi">
-                    <span>Savings rate</span><strong>{new Intl.NumberFormat("da-DK", { maximumFractionDigits: 1 }).format(savingsRate)}%</strong><small>{savingsRate - previousSavingsRate >= 0 ? "+" : ""}{new Intl.NumberFormat("da-DK", { maximumFractionDigits: 1 }).format(savingsRate - previousSavingsRate)} pp vs prior year</small>
+                    <span>Savings rate</span><strong>{formatOneDecimal(savingsRate)}%</strong><small>{savingsRate - previousSavingsRate >= 0 ? "+" : ""}{formatOneDecimal(savingsRate - previousSavingsRate)} pp vs prior year</small>
                 </div>
             </div>
 

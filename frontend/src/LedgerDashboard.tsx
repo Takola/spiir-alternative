@@ -2,6 +2,7 @@ import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, useEffect
 import { createPortal, flushSync } from "react-dom";
 
 import { getLedgerRetrieveStatus, getLedgerTaxonomy, getSpiirIncomeExpenseSeries, getSpiirLocalLedgerTransactions, getSpiirLocalLedgerTransactionsPage, getSpiirOverview, getSpiirStatus, getSpiirTransactions, invalidateLocalLedgerCache, invalidateSpiirCache, rebuildSpiirFromLocal, saveSpiirLocalLedgerOverrides, scheduleSpiirRebuildFromLocal, startLedgerRetrieveJob } from "./api";
+import { formatCurrency, formatDateTime, formatDkk, formatIsoDate, formatMobileIsoDate, formatMonthLabel, formatPostingAmount, formatSignedPostingAmount, formatWholeDkk, formatWholeNumber } from "./formatting";
 import { computeAllTransactionsLoaded, localLedgerFirstPage, mergeUpdatedTransactions } from "./ledgerState";
 import SpiirSunburstModal, { type SunburstState } from "./SpiirSunburstModal";
 import { formatSplitDraftAmount, parseSplitDraftAmount } from "./splitAmount";
@@ -155,23 +156,6 @@ const SPIIR_CATEGORY_ALIASES: Record<string, string[]> = {
     "Anden indkomst": ["Arveforskud", "Pengegaver"],
 };
 
-function formatDateTime(value: string | null | undefined): string {
-    if (!value) {
-        return "-";
-    }
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) {
-        return value;
-    }
-    return new Intl.DateTimeFormat("da-DK", {
-        day: "2-digit",
-        month: "2-digit",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit"
-    }).format(parsed);
-}
-
 function categoryOrderIndex(value: string, order: string[]): number {
     const index = order.indexOf(value);
     return index === -1 ? order.length : index;
@@ -199,72 +183,23 @@ function spiirSearchRank(value: string, query: string): number {
 }
 
 function formatTxDate(value: string): string {
-    if (!value) {
-        return "-";
-    }
-    const [year, month, day] = value.split("-");
-    if (!year || !month || !day) {
-        return value;
-    }
-    return `${day}-${month}-${year}`;
+    return formatIsoDate(value);
 }
 
 function formatMobileTxDate(value: string): string {
-    if (!value) {
-        return "-";
-    }
-    const [year, month, day] = value.split("-");
-    const parsed = new Date(Number(year), Number(month) - 1, Number(day));
-    if (Number.isNaN(parsed.getTime())) {
-        return formatTxDate(value);
-    }
-    return new Intl.DateTimeFormat("da-DK", {
-        day: "numeric",
-        month: "short",
-        year: "numeric",
-    }).format(parsed).replace(/\.$/, "");
+    return formatMobileIsoDate(value);
 }
 
 function formatMobileAmount(value: number): string {
-    const formatted = formatPostingAmount(value);
-    return value > 0 ? `+${formatted}` : formatted;
-}
-
-function formatPostingAmount(value: number): string {
-    return new Intl.NumberFormat("da-DK", {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2
-    }).format(value);
+    return formatSignedPostingAmount(value);
 }
 
 function formatSidebarAmount(value: number): string {
-    return `${new Intl.NumberFormat("da-DK", {
-        maximumFractionDigits: 0,
-        minimumFractionDigits: 0
-    }).format(value)} kr`;
-}
-
-function formatWholeDkk(value: number): string {
-    return `${new Intl.NumberFormat("da-DK", {
-        maximumFractionDigits: 0,
-        minimumFractionDigits: 0
-    }).format(value)} kr`;
+    return formatWholeDkk(value);
 }
 
 function formatChartAmount(value: number): string {
-    return new Intl.NumberFormat("da-DK", {
-        maximumFractionDigits: 0,
-        minimumFractionDigits: 0
-    }).format(value);
-}
-
-function formatDkk(value: number): string {
-    return new Intl.NumberFormat("da-DK", {
-        style: "currency",
-        currency: "DKK",
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2
-    }).format(value);
+    return formatWholeNumber(value);
 }
 
 function counterparty(transaction: LedgerTransaction): string {
@@ -272,21 +207,11 @@ function counterparty(transaction: LedgerTransaction): string {
 }
 
 function monthLabel(value: string): string {
-    const [year, month] = value.split("-");
-    const parsed = new Date(Number(year), Number(month) - 1, 1);
-    if (Number.isNaN(parsed.getTime())) {
-        return value;
-    }
-    return new Intl.DateTimeFormat("da-DK", { month: "long", year: "numeric" }).format(parsed);
+    return formatMonthLabel(value);
 }
 
 function shortMonthLabel(value: string): string {
-    const [year, month] = value.split("-");
-    const parsed = new Date(Number(year), Number(month) - 1, 1);
-    if (Number.isNaN(parsed.getTime())) {
-        return value;
-    }
-    return new Intl.DateTimeFormat("da-DK", { month: "short" }).format(parsed).replace(".", "");
+    return formatMonthLabel(value, true);
 }
 
 function longMonthLabel(value: string): string {
@@ -1882,11 +1807,7 @@ function accountDisplayName(account: LedgerAccount): string {
     if (!Number.isFinite(amount)) {
         return "Saldo ikke hentet";
     }
-    return new Intl.NumberFormat("da-DK", {
-        style: "currency",
-        currency: account.balance?.currency || account.currency || "DKK",
-        maximumFractionDigits: 0,
-    }).format(amount);
+    return formatCurrency(amount, account.balance?.currency || account.currency || "DKK");
 }
 
 export default function LedgerDashboard({
