@@ -10,7 +10,6 @@ The normal workflow is:
 4. review categories, notes, splits, and pending transactions in the frontend
 5. view income, expense, and category summaries
 
-There is no receipt subsystem, GitHub CI setup, screenshot gallery, or external-hosting component in this repository.
 
 ## What is where
 
@@ -37,7 +36,7 @@ data/                                  private runtime data; never commit it
 .env                                   private local configuration; never commit it
 start-local.bat                        Windows launcher for backend + frontend
 start.ps1                              PowerShell launcher alternative
-simple_guide.txt                       older short setup note
+simple_guide.txt                       short setup note for humans 
 ```
 
 ## Windows setup
@@ -70,14 +69,18 @@ Start both services by double-clicking `start-local.bat`, then open <http://loca
 
 ## First Enable Banking authorization
 
-If you need to create a consent session, run these commands from the repository root:
+The PEM file is required, but it only identifies/signs your Enable Banking application. It does not grant access to a bank account. You must complete the consent flow below once for each account connection. After a successful consent, the saved session is reused by **Hent seneste**; you do not repeat these commands for every fetch.
+
+If `data/transactions/enablebanking/latest_session.json` already exists and is still valid, skip this section and use **Hent seneste** in the frontend.
+
+To create a new consent session, run these commands from the repository root:
 
 ```powershell
 .\.venv\Scripts\python.exe backend\enablebanking_probe.py aspsps --name "part of your bank name"
 .\.venv\Scripts\python.exe backend\enablebanking_probe.py auth-url --days 170 --aspsp-name "<provider name>" --aspsp-country DK
 ```
 
-Open the printed URL, complete authorization, then exchange the returned code:
+The first command lists matching providers. The second creates a consent URL. Open the printed URL, complete the bank/MitID authorization, then exchange the returned code:
 
 ```powershell
 .\.venv\Scripts\python.exe backend\enablebanking_probe.py session --code "<code-from-redirect>"
