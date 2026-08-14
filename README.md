@@ -1,60 +1,50 @@
 # Spiir Alternative
 
-A local, single-user personal-finance application. It imports transactions through Enable Banking, stores a canonical local JSON ledger, lets you review and edit transactions, and builds monthly income and expense views from that ledger.
+A local, single-user personal-finance app that fetches bank transactions through Enable Banking and displays them in a local React frontend.
 
-The application is bank-provider-neutral. During consent you choose an available Danish bank (ASPSP); no specific bank is required.
+The normal workflow is:
 
-## Screenshots
+1. authorize an account through Enable Banking
+2. fetch balances and booked transactions
+3. merge them into the local ledger
+4. review categories, notes, splits, and pending transactions in the frontend
+5. view income, expense, and category summaries
 
-### Transaction review
+There is no receipt subsystem, GitHub CI setup, screenshot gallery, or external-hosting component in this repository.
 
-![Local ledger transaction review](docs/screenshots/local-ledger-review.png)
-
-### Monthly overview
-
-![Monthly income and expense chart](docs/screenshots/spiir-monthly-chart-and-table.jpeg)
-
-### Category drilldown
-
-![Category sunburst drilldown](docs/screenshots/spiir-sunburst-drilldown.png)
-
-![Category transactions](docs/screenshots/spiir-category-transactions.png)
-
-## Architecture
-
-The application has one authoritative transaction model:
-
-1. `backend/app/enable_banking_service.py` fetches account balances and booked transactions, archives the provider response, and normalizes it.
-2. `backend/app/spiir_local_ledger_service.py` merges normalized transactions into the local ledger and applies local edits, review state, splits, and category suggestions.
-3. `backend/app/spiir_service.py` derives the overview and income/expense series from the local ledger.
-4. `backend/app/api.py` exposes the FastAPI routes used by the frontend.
-5. `frontend/src/LedgerDashboard.tsx` and `frontend/src/SpiirDashboard.tsx` provide transaction review and reporting.
-
-The category catalog is defined in `backend/app/taxonomy.py`; automatic rules live in `backend/app/autocategorization.py`.
-
-Runtime data is stored below `data/` and is ignored by Git. The important files are:
+## What is where
 
 ```text
-data/
-|-- local_secrets/enablebanking/*.pem
-|-- transactions/enablebanking/latest_session.json
-|-- transactions/enablebanking/transactions.json
-|-- transactions/raw/enablebanking/*.json
-|-- spiir/local/transactions.json
-|-- spiir/local/overrides.json
-|-- spiir/local/metadata.json
-`-- spiir/processed/{overview.json,tx.json}
+backend/
+├── app/
+│   ├── api.py                         FastAPI routes
+│   ├── enable_banking_service.py      Enable Banking client and bank retrieval
+│   ├── spiir_local_ledger_service.py  canonical local ledger and edits
+│   ├── spiir_service.py               derived overview/reporting data
+│   ├── taxonomy.py                    category catalog
+│   └── autocategorization.py          automatic categorization rules
+├── enablebanking_probe.py             consent/session diagnostic utility
+├── requirements.txt
+├── pyproject.toml                     pytest and Ruff configuration
+└── tests/                             backend regression tests
+
+frontend/
+├── src/LedgerDashboard.tsx            transaction review UI
+├── src/SpiirDashboard.tsx             overview/reporting UI
+└── package.json
+
+data/                                  private runtime data; never commit it
+.env                                   private local configuration; never commit it
+start-local.bat                        Windows launcher for backend + frontend
+start.ps1                              PowerShell launcher alternative
+simple_guide.txt                       older short setup note
 ```
 
-## Quick start on Windows
+## Windows setup
 
-Requirements:
+Requirements: Python 3.11 or newer, Node.js 22 or newer, and an Enable Banking application/private key for live bank data.
 
-- Python 3.11 or newer
-- Node.js 22 or newer
-- an Enable Banking app and private key if you want live bank data
-
-Install once from PowerShell:
+Install dependencies once from PowerShell:
 
 ```powershell
 py -m venv .venv
@@ -64,121 +54,94 @@ npm install
 Set-Location ..
 ```
 
-Create `.env` in the repository root (see [Configuration](#configuration)), then run:
-
-```text
-start-local.bat
-```
-
-This starts the backend at `http://127.0.0.1:8000` and the frontend at `http://127.0.0.1:5173`. `start.ps1` is the PowerShell entry point used by the batch wrapper.
-
-## Manual start
-
-Backend:
-
-```powershell
-.\.venv\Scripts\python.exe -m uvicorn app.api:app --app-dir backend --host 127.0.0.1 --port 8000
-```
-
-Frontend:
-
-```powershell
-Set-Location frontend
-npm run dev
-```
-
-Vite proxies `/api` to the backend, so the browser never needs the Enable Banking key.
-
-## Configuration
-
-The backend automatically loads a root `.env` file without overriding variables already set in the shell. Copy `env.example` as a starting point, but use normal dotenv assignments in `.env` (omit the shell-only `export` keyword if preferred):
+Create `.env` in the repository root. Start from [env.example](env.example), using normal dotenv assignments:
 
 ```dotenv
-SPIIR_ALT_DATA_DIR=C:/path/to/spiir-alternative/data
+SPIIR_ALT_DATA_DIR=data
 ENABLEBANKING_APP_ID=your-enable-banking-app-id
-ENABLEBANKING_PRIVATE_KEY_PATH=C:/path/to/spiir-alternative/data/local_secrets/enablebanking/your-enable-banking-app-id.pem
+ENABLEBANKING_PRIVATE_KEY_PATH=data/local_secrets/enablebanking/your-enable-banking-app-id.pem
 ENABLEBANKING_REDIRECT_URL=https://your-registered-callback.example/callback
 ENABLEBANKING_PSU_ID=spiir-alternative-local
-SPIIR_CUTOVER_DATE=2026-01-01
 ```
 
-If exactly one PEM file exists in `data/local_secrets/enablebanking/`, the backend infers the app ID from its filename. Explicit variables are preferable when more than one key exists.
+The backend loads `.env` automatically. It also accepts the older `$PWD/data` path syntax, but `SPIIR_ALT_DATA_DIR=data` is preferred on Windows. Put the private key at `data/local_secrets/enablebanking/<app-id>.pem`; if exactly one PEM exists there, the backend can infer the app ID from its filename.
 
-Never put these values in frontend source, `VITE_*` variables, or committed files. `.env`, `data/`, PEM keys, sessions, transaction archives, and local ledgers must remain private.
+Start both services by double-clicking `start-local.bat`, then open <http://localhost:5173/>. The backend runs on <http://127.0.0.1:8000/>. For deliberate trusted-LAN access, run `start-local.bat lan`; this exposes the unauthenticated finance API through the frontend proxy, so use it only on a trusted network.
 
-See [docs/enable-banking.md](docs/enable-banking.md) for consent and session setup.
+## First Enable Banking authorization
 
-## Bank retrieval
+If you need to create a consent session, run these commands from the repository root:
 
-Once `data/transactions/enablebanking/latest_session.json` exists, use the **Hent seneste** action in the transaction view. The same operation is available through the API:
+```powershell
+.\.venv\Scripts\python.exe backend\enablebanking_probe.py aspsps --name "part of your bank name"
+.\.venv\Scripts\python.exe backend\enablebanking_probe.py auth-url --days 170 --aspsp-name "<provider name>" --aspsp-country DK
+```
+
+Open the printed URL, complete authorization, then exchange the returned code:
+
+```powershell
+.\.venv\Scripts\python.exe backend\enablebanking_probe.py session --code "<code-from-redirect>"
+```
+
+This creates `data/transactions/enablebanking/latest_session.json`. Then use **Hent seneste** in the frontend or call:
 
 ```powershell
 Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/bank/retrieve/start
 Invoke-RestMethod http://127.0.0.1:8000/api/bank/retrieve/status
 ```
 
-The job fetches each account, records its current booked balance when available, archives the raw response, normalizes and deduplicates transactions, and merges eligible rows into the local ledger. `SPIIR_CUTOVER_DATE` prevents live-bank rows on or before that date from duplicating historical imports.
+The retrieval job fetches each linked account, records balances when available, archives raw responses, normalizes and deduplicates transactions, and merges them into the local ledger.
+
+## Runtime data
+
+All content under `data/` is private and ignored by Git.
+
+```text
+data/
+├── local_secrets/enablebanking/*.pem       private key
+├── transactions/enablebanking/             current sessions and bank state
+├── transactions/raw/enablebanking/         raw bank-response archives
+├── transactions/nordea/                    legacy compatibility staging path
+├── backups/                                snapshots before local writes
+└── spiir/
+    ├── local/                              canonical ledger, overrides, metadata
+    ├── processed/                          derived overview and transaction output
+    └── raw/                                optional old Spiir-export compatibility input
+```
+
+The `spiir` directory name is historical. `spiir/local/transactions.json` is the canonical ledger even when all new data comes from Enable Banking. The old `transactions/nordea/` folder is retained as a fallback for existing data and should not be deleted until a successful fetch has created `transactions/enablebanking/transactions.json`.
+
+Raw bank archives and old backups are not required for normal frontend display, but backups can restore manual categories, notes, splits, and review state. Prune them only after keeping a recovery copy.
 
 ## Main API routes
 
 | Method | Route | Purpose |
 | --- | --- | --- |
-| `GET` | `/api/status` | Process and storage status |
-| `POST` | `/api/bank/retrieve/start` | Start bank fetch and local-ledger merge |
-| `GET` | `/api/bank/retrieve/status` | Poll the fetch job |
-| `GET` | `/api/ledger/taxonomy` | Categories and hashtags |
-| `GET` | `/api/spiir/local-ledger/transactions` | Read the canonical ledger |
-| `POST` | `/api/spiir/local-ledger/overrides` | Apply transaction edits |
-| `GET` | `/api/spiir/local-ledger/income-expense-series` | Read chart data |
-| `POST` | `/api/spiir/rebuild-from-local` | Rebuild processed reporting data |
-| `GET` | `/api/spiir/overview` | Read the processed overview |
+| `GET` | `/api/status` | backend and storage status |
+| `POST` | `/api/bank/retrieve/start` | start bank fetch and ledger merge |
+| `GET` | `/api/bank/retrieve/status` | poll retrieval progress |
+| `GET` | `/api/ledger/taxonomy` | categories and hashtags |
+| `GET` | `/api/spiir/local-ledger/transactions` | read canonical ledger rows |
+| `POST` | `/api/spiir/local-ledger/overrides` | save categories, notes, splits, and review edits |
+| `GET` | `/api/spiir/local-ledger/income-expense-series` | chart data |
+| `POST` | `/api/spiir/rebuild-from-local` | rebuild derived reporting files |
+| `GET` | `/api/spiir/overview` | read derived overview |
 
-The import-preview/apply and split migration/repair routes in `backend/app/api.py` are maintenance and compatibility operations, not a second transaction model.
+## Development checks
 
-## Network and security
-
-The default backend and Vite server bind to `127.0.0.1`. The FastAPI API has no login and must not be exposed directly to the LAN or internet.
-
-To open the UI to another device on a trusted LAN, explicitly use LAN mode:
-
-```powershell
-start-local.bat lan
-```
-
-This is still a security decision: Vite's `/api` proxy effectively gives every visitor who can reach the frontend access to the unauthenticated backend operations, including reading and editing financial data and starting a bank fetch. The private key is not downloaded to their browser, but they can cause the backend to use it. Use this only on a trusted network with a restrictive firewall. Add authentication and HTTPS before broader access.
-
-## Compatibility with existing data
-
-Some stored transaction IDs, source fields, import-run labels, and fallback paths retain `nordea` in their internal value. They are legacy compatibility keys so existing overrides and ledgers continue to match; they do not restrict the selected Enable Banking provider. Do not rewrite those IDs in existing JSON by hand.
-
-An older Spiir postings export can still be imported once from `data/spiir/raw/all_entries.json` with the local-ledger preview/apply routes. New activity should enter through `/api/bank/retrieve/start` and the canonical local ledger.
-
-## Storage decision: JSON ledger, not SQLite (for now)
-
-Decision: keep `data/spiir/local/transactions.json` as the canonical store for this single-user application.
-
-Why: writes are already atomic and backed up, the data remains inspectable and portable, current dataset sizes fit in memory, and moving to SQLite would add migration and dual-storage risk without solving a demonstrated problem. The service and API boundaries keep a future migration possible.
-
-Reconsider SQLite when concurrent writers, multi-user access, substantially larger datasets, complex ad-hoc queries, or measurable JSON read/write bottlenecks become real requirements. A future migration should preserve transaction IDs and overrides and include a verified rollback/export path.
-
-## Tests
-
-Run these checks before changing the application:
+The backend tests and lint configuration live under `backend/`:
 
 ```powershell
 Set-Location backend
-..\.venv\Scripts\python.exe -m ruff check app tests
 ..\.venv\Scripts\python.exe -m pytest
+..\.venv\Scripts\python.exe -m ruff check app tests
 Set-Location ..\frontend
 npm test
 npm run build
 ```
 
-## Privacy checklist
+`.pytest_cache/` and `.ruff_cache/` are disposable tool caches. They are recreated automatically after running the corresponding commands.
 
-Before sharing a fork, log, screenshot, or patch:
+## Security
 
-1. Confirm `.env`, `data/`, and all PEM files are untracked.
-2. Remove sessions, account identifiers, balances, transaction descriptions, notes, and amounts from examples.
-3. Rotate any key exposed in source control, chat, CI output, or screenshots.
-4. Keep the API loopback-only unless you have added an authentication boundary.
+Enable Banking keys, consent sessions, raw responses, balances, transactions, and `.env` must remain local and private. The backend and frontend bind to loopback by default. LAN mode is intentionally unauthenticated and should only be used on a trusted network.
