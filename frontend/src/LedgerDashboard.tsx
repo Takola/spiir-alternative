@@ -72,7 +72,7 @@ const SPIIR_SUBCATEGORY_ORDER: Record<string, string[]> = {
     Transport: ["Bil-, MC-, bådlån o.l.", "Brændstof", "Bilforsikring & autohjælp", "Ejerafgift/grøn afgift", "Bus, tog, færge o.l.", "Taxi", "Parkering", "Værksted & reservedele", "Anden transport"],
     Husholdning: ["Dagligvarer", "Kiosk, bager & specialbutikker", "Kantine- & frokostordning"],
     "Andre leveomkostninger": ["Apotek & medicin", "Behandling & læger", "Underholds- & børnebidrag", "Institution", "Fagforening & a-kasse", "Livs- & ulykkesforsikring", "Sundheds- & sygeforsikring", "Briller & kontaktlinser", "TV & streaming", "Telefoni & internet", "Studieudgifter", "Foreninger & kontingenter"],
-    Privatforbrug: ["Fastfood & takeaway", "Bar, cafe & restaurant", "Tøj, sko & accessories", "Møbler & boligudstyr", "Elektronik & computerudstyr", "Film, musik & læsestof", "Online services & software", "Hobby & sportsudstyr", "Biograf, koncerter & forlystelser", "Frisør & personlig pleje", "Sport & fritid", "Hus & havehjælp", "Spil & legetøj", "Tips & lotto", "Babyudstyr", "Kæledyr", "Gaver & velgørenhed", "Tobak & alkohol", "Kontanthævning & check", "Højskole- & kursusophold", "Serviceydelser & rådgivning", "Andet privatforbrug"],
+    Privatforbrug: ["Fastfood & takeaway", "Bar, cafe & restaurant", "Tøj, sko & accessories", "Møbler & boligudstyr", "Elektronik & computerudstyr", "Film, musik & læsestof", "Online services & software", "Hobby & sportsudstyr", "Biograf, koncerter & forlystelser", "Frisør & personlig pleje", "Sport & fritid", "Hus & havehjælp", "Spil & legetøj", "Tips & lotto", "Babyudstyr", "Kæledyr", "Gaver & velgørenhed", "Gavekort", "Tobak & alkohol", "Kontanthævning & check", "Højskole- & kursusophold", "Serviceydelser & rådgivning", "Andet privatforbrug"],
     Ferie: ["Fly & Hotel", "Billeje", "Sommerhus & camping", "Ferieaktiviteter", "Rejseforsikring"],
     Diverse: ["Ukendt", "Bankgebyrer", "Rykkergebyrer", "Bøder & afgifter", "Restskat", "Offentligt gebyr", "Ikke kategoriseret"],
     "Lån & gæld": ["Studielån", "Forbrugslån", "Private lån (venner & familie)", "Udlånsrenter"],
@@ -445,6 +445,10 @@ function isTransferCategory(category: LedgerCategoryOption): boolean {
     return spiirMenuMainName(category) === "Vis ikke";
 }
 
+function isInternalTransfer(row: LedgerDisplayRow): boolean {
+    return isTransferCategory(row.category) || row.transaction.categoryReason === "own_account_transfer";
+}
+
 function ledgerRowClassName(row: LedgerDisplayRow, selected: boolean, selectedCount: number): string | undefined {
     const classes = [];
     if (selected) {
@@ -457,7 +461,7 @@ function ledgerRowClassName(row: LedgerDisplayRow, selected: boolean, selectedCo
     } else if (row.transaction.is_extraordinary) {
         classes.push("ledger-extraordinary-row");
     }
-    if (isTransferCategory(row.category)) {
+    if (isInternalTransfer(row)) {
         classes.push("ledger-transfer-row");
     }
     return classes.length > 0 ? classes.join(" ") : undefined;
@@ -560,11 +564,11 @@ function rowMatchesFilters(
         return false;
     }
     if (filters.outflowsOnly) {
-        if (row.amount >= 0 || isTransferCategory(row.category)) {
+        if (row.amount >= 0 || isInternalTransfer(row)) {
             return false;
         }
     }
-    const transferOverride = filters.visibilityFilter === "all" && filters.showTransfersAlways && isTransferCategory(row.category);
+    const transferOverride = filters.visibilityFilter === "all" && filters.showTransfersAlways && isInternalTransfer(row);
     if (!transferOverride) {
         if (filters.visibilityFilter === "bills" && !SPIIR_FIXED_CATEGORY_NAMES.has(row.category.categoryName)) {
             return false;
@@ -584,7 +588,7 @@ function rowMatchesFilters(
         if (filters.visibilityFilter === "cashflow" && !["Income", "Expense", "Investment"].includes(row.category.categoryType)) {
             return false;
         }
-        if (["operating", "cashflow"].includes(filters.visibilityFilter) && isTransferCategory(row.category)) {
+        if (["operating", "cashflow"].includes(filters.visibilityFilter) && isInternalTransfer(row)) {
             return false;
         }
         if (filters.visibilityFilter === "consumption" && row.amount >= 0) {
@@ -1709,7 +1713,7 @@ function MobileReviewRow({
                 "ledger-mobile-row",
                 expanded ? "expanded" : null,
                 !expanded && pending ? "pending" : null,
-                isTransferCategory(row.category) ? "transfer" : null,
+                isInternalTransfer(row) ? "transfer" : null,
             ].filter(Boolean).join(" ")}
             onClick={() => onOpen(row, !expanded && isUncategorizedCategory(row.category))}
         >

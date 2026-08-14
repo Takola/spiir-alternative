@@ -68,6 +68,22 @@ html[data-density="compact"] .spiir-pill-toggle {
     color: var(--accent-strong);
 }
 
+.theme-dark .spiir-pill-toggle {
+    background: #17271d;
+    border-color: #405448;
+    color: var(--ink);
+}
+
+.theme-dark .spiir-pill-toggle:hover {
+    background: #20382a;
+}
+
+.theme-dark .spiir-pill-toggle.active {
+    background: #245039;
+    border-color: #5b9b76;
+    color: #eff8f2;
+}
+
 .spiir-toggle-group {
     gap: 0.16rem;
     padding: 0.18rem;
@@ -104,6 +120,13 @@ html[data-density="compact"] .spiir-pill-toggle {
 .spiir-sort-select-wrap select {
     flex: 0 0 auto;
     min-width: 9rem;
+    width: 9rem;
+}
+
+.theme-dark .spiir-sort-select-wrap select {
+    background: #17271d;
+    border-color: #405448;
+    color: #eff8f2;
 }
 
 .spiir-window-control {
@@ -137,11 +160,35 @@ html[data-density="compact"] .spiir-pill-toggle {
 
 .spiir-plot-header {
     margin-bottom: 0.35rem;
+    align-items: flex-start;
+    flex-wrap: wrap;
+}
+
+.spiir-plot-header > :first-child {
+    min-width: 0;
+    flex: 1 1 18rem;
 }
 
 .spiir-control-bar-chart {
+    flex: 1 1 auto;
+    max-width: 100%;
     justify-content: flex-end;
     gap: 0.7rem 0.9rem;
+}
+
+.spiir-control-bar-chart .spiir-sort-select-wrap {
+    max-width: 100%;
+}
+
+.spiir-control-bar-chart .spiir-sort-select-wrap select {
+    max-width: 100%;
+}
+
+@media (max-width: 760px) {
+    .spiir-control-bar-chart {
+        width: 100%;
+        justify-content: flex-start;
+    }
 }
 
 .spiir-table-scroll,

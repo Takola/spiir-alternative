@@ -593,24 +593,6 @@ function comparableTransactionTotal(
     }, 0);
 }
 
-function comparableExpenseOutflowTotal(
-    transactions: SpiirTransaction[] | null,
-    row: SpiirOverviewRow | null,
-    periods: string[],
-    cutoffDay: number | null,
-): number | null {
-    if (!transactions || !row || periods.length === 0) return null;
-    const periodSet = new Set(periods);
-    const lastPeriod = periods[periods.length - 1];
-    const cutoffDate = cutoffDay === null ? null : `${lastPeriod}-${String(cutoffDay).padStart(2, "0")}`;
-    return transactions.reduce((sum, transaction) => {
-        const month = String(transaction.yyyymm ?? transaction.ymd?.slice(0, 7) ?? "");
-        if (!periodSet.has(month) || (cutoffDate && month === lastPeriod && transaction.ymd > cutoffDate)) return sum;
-        const amount = Number(transaction.amount ?? 0);
-        return transactionMatchesOverviewRow(transaction, row) && amount < 0 ? sum + Math.abs(amount) : sum;
-    }, 0);
-}
-
 function monthEndDate(month: string): string {
     const [year, monthNumber] = month.split("-").map((part) => Number(part));
     const day = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
@@ -661,7 +643,7 @@ function drilldownFilterFromOverviewRow(row: SpiirOverviewRow, periods: string[]
         return { title: "", ...period, visibilityFilter: "income", categoryFilter: null };
     }
     if (row.kind === "expense") {
-        return { title: "", ...period, visibilityFilter: "expense", categoryFilter: null, outflowsOnly: true };
+        return { title: "", ...period, visibilityFilter: "expense", categoryFilter: null };
     }
     if (row.kind === "investment") {
         return { title: "", ...period, visibilityFilter: "investment", categoryFilter: null };
@@ -683,8 +665,27 @@ function drilldownFilterFromOverviewRow(row: SpiirOverviewRow, periods: string[]
         ...period,
         visibilityFilter: categoryFilter ? "category" : row.kind === "expense" ? "consumption" : "all",
         categoryFilter,
-        outflowsOnly: row.kind === "main" || row.kind === "sub" ? true : undefined,
     };
+}
+
+function finishedCurrentYearPeriods(periods: string[], now = new Date()): string[] {
+    const year = String(now.getFullYear());
+    const currentMonth = now.getMonth() + 1;
+    return periods.filter((period) => {
+        if (!period.startsWith(`${year}-`)) {
+            return false;
+        }
+        const month = Number(period.slice(5, 7));
+        return Number.isInteger(month) && month >= 1 && month < currentMonth;
+    });
+}
+
+function projectedYearTotal(row: SpiirOverviewRow, monthlyRows: SpiirOverviewRow[], periods: string[]): number | null {
+    if (periods.length === 0) {
+        return null;
+    }
+    const monthlyRow = monthlyRows.find((candidate) => candidate.key === row.key) ?? row;
+    return Math.round(rowTotalForPeriods(monthlyRow, periods) * 12 / periods.length);
 }
 
 function categoryOptionFromTransactions(items: SpiirTransaction[]): LedgerCategoryOption | null {
@@ -727,6 +728,7 @@ type OverviewSectionProps = {
     onCollapseAll: () => void;
     heatmap: boolean;
     showPrevTotals: boolean;
+    projection: { year: string; periods: string[]; monthlyRows: SpiirOverviewRow[] } | null;
     onOpenDrilldown: (row: SpiirOverviewRow, title: string, periods: string[], kind: PeriodKind) => void;
     onOpenSunburst: (title: string, periods: string[], mode: SunburstMode, rows: SpiirOverviewRow[]) => void;
 };
@@ -743,6 +745,7 @@ function OverviewSection({
     onCollapseAll,
     heatmap,
     showPrevTotals,
+    projection,
     onOpenDrilldown,
     onOpenSunburst
 }: OverviewSectionProps) {
@@ -757,6 +760,9 @@ function OverviewSection({
         [orderedRows]
     );
     const allExpanded = expandableKeys.length > 0 && expandableKeys.every((key) => expandedRows.has(key));
+    const showProjection = periodKind === "year"
+        && projection !== null
+        && visiblePeriods.includes(projection.year);
 
     return (
         <section className="panel spiir-panel">
@@ -784,6 +790,7 @@ function OverviewSection({
                                     </button>
                                 </th>
                             ))}
+                            {showProjection ? <th>Proj. {projection.year}</th> : null}
                             <th>
                                 <button
                                     type="button"
@@ -805,6 +812,9 @@ function OverviewSection({
                             const avg = rowAvgForPeriods(row, visiblePeriods);
                             const prevTotal = rowTotalForPeriods(row, prevPeriods);
                             const delta = total - prevTotal;
+                            const projected = showProjection && projection
+                                ? projectedYearTotal(row, projection.monthlyRows, projection.periods)
+                                : null;
                             return (
                                 <tr key={row.key} className={`spiir-row spiir-level-${row.level}${row.key === "investment" || row.parent === "investment" ? " spiir-investment-row" : ""}`}>
                                     <td className="spiir-sticky spiir-label-cell">
@@ -831,6 +841,21 @@ function OverviewSection({
                                             </td>
                                         );
                                     })}
+                                    {showProjection ? (
+                                        <td>
+                                            {projected === null ? (
+                                                <span className="spiir-muted-cell">-</span>
+                                            ) : (
+                                                <button
+                                                    type="button"
+                                                    className={`spiir-cell-button spiir-cell-button-right ${valueToneClass(projected)}`}
+                                                    onClick={() => onOpenDrilldown(row, `${row.label} · ${projection?.year} projection`, projection?.periods ?? [], "month")}
+                                                >
+                                                    {formatNumber(projected)}
+                                                </button>
+                                            )}
+                                        </td>
+                                    ) : null}
                                     <td>
                                         <button
                                             type="button"
@@ -1089,8 +1114,8 @@ function BusinessReview({
 
     const currentIncome = comparableTransactionTotal(transactions, incomeRow, reportingCurrentPeriods, null) ?? (incomeRow ? rowTotalForPeriods(incomeRow, reportingCurrentPeriods) : 0);
     const previousIncome = comparableTransactionTotal(transactions, incomeRow, reportingPreviousPeriods, null) ?? (incomeRow ? rowTotalForPeriods(incomeRow, reportingPreviousPeriods) : 0);
-    const currentExpense = comparableExpenseOutflowTotal(transactions, expenseRow, reportingCurrentPeriods, null) ?? Math.abs(expenseRow ? rowTotalForPeriods(expenseRow, reportingCurrentPeriods) : 0);
-    const previousExpense = comparableExpenseOutflowTotal(transactions, expenseRow, reportingPreviousPeriods, null) ?? Math.abs(expenseRow ? rowTotalForPeriods(expenseRow, reportingPreviousPeriods) : 0);
+    const currentExpense = Math.abs(comparableTransactionTotal(transactions, expenseRow, reportingCurrentPeriods, null) ?? (expenseRow ? rowTotalForPeriods(expenseRow, reportingCurrentPeriods) : 0));
+    const previousExpense = Math.abs(comparableTransactionTotal(transactions, expenseRow, reportingPreviousPeriods, null) ?? (expenseRow ? rowTotalForPeriods(expenseRow, reportingPreviousPeriods) : 0));
     const currentInvestment = Math.abs(comparableTransactionTotal(transactions, investmentRow, reportingCurrentPeriods, null) ?? (investmentRow ? rowTotalForPeriods(investmentRow, reportingCurrentPeriods) : 0));
     const previousInvestment = Math.abs(comparableTransactionTotal(transactions, investmentRow, reportingPreviousPeriods, null) ?? (investmentRow ? rowTotalForPeriods(investmentRow, reportingPreviousPeriods) : 0));
     const currentOperatingSurplus = currentIncome - currentExpense;
@@ -1100,18 +1125,16 @@ function BusinessReview({
     const savingsRate = currentIncome ? (currentOperatingSurplus / currentIncome) * 100 : 0;
     const previousSavingsRate = previousIncome ? (previousOperatingSurplus / previousIncome) * 100 : 0;
     const monthLabels = currentPeriods.map((period) => new Intl.DateTimeFormat("da-DK", { month: "short" }).format(new Date(`${period}-01T00:00:00`)));
-    const comparableMonthValue = (row: SpiirOverviewRow | null, period: string, absolute = false, outflowsOnly = false): number => {
+    const comparableMonthValue = (row: SpiirOverviewRow | null, period: string, absolute = false): number => {
         const isLastComparedMonth = period === currentPeriods[currentPeriods.length - 1] || period === previousPeriods[previousPeriods.length - 1];
-        const total = (outflowsOnly
-            ? comparableExpenseOutflowTotal(transactions, row, [period], isLastComparedMonth ? comparableCutoffDay : null)
-            : comparableTransactionTotal(transactions, row, [period], isLastComparedMonth ? comparableCutoffDay : null))
+        const total = comparableTransactionTotal(transactions, row, [period], isLastComparedMonth ? comparableCutoffDay : null)
             ?? Number(row?.values[period] ?? 0);
         return absolute ? Math.abs(total) : total;
     };
     const currentIncomeByMonth = currentPeriods.map((period) => comparableMonthValue(incomeRow, period));
     const previousIncomeByMonth = previousPeriods.map((period) => comparableMonthValue(incomeRow, period));
-    const currentExpenseByMonth = currentPeriods.map((period) => comparableMonthValue(expenseRow, period, true, true));
-    const previousExpenseByMonth = previousPeriods.map((period) => comparableMonthValue(expenseRow, period, true, true));
+    const currentExpenseByMonth = currentPeriods.map((period) => comparableMonthValue(expenseRow, period, true));
+    const previousExpenseByMonth = previousPeriods.map((period) => comparableMonthValue(expenseRow, period, true));
     const currentInvestmentByMonth = currentPeriods.map((period) => comparableMonthValue(investmentRow, period, true));
     const previousInvestmentByMonth = previousPeriods.map((period) => comparableMonthValue(investmentRow, period, true));
     const cumulative = (values: number[]) => {
@@ -1133,8 +1156,8 @@ function BusinessReview({
         .filter((row) => row.kind === "main" && row.parent === "expense")
         .map((row) => ({
             row,
-            current: comparableExpenseOutflowTotal(transactions, row, reportingCurrentPeriods, null) ?? Math.abs(rowTotalForPeriods(row, reportingCurrentPeriods)),
-            previous: comparableExpenseOutflowTotal(transactions, row, reportingPreviousPeriods, null) ?? Math.abs(rowTotalForPeriods(row, reportingPreviousPeriods)),
+            current: Math.abs(comparableTransactionTotal(transactions, row, reportingCurrentPeriods, null) ?? rowTotalForPeriods(row, reportingCurrentPeriods)),
+            previous: Math.abs(comparableTransactionTotal(transactions, row, reportingPreviousPeriods, null) ?? rowTotalForPeriods(row, reportingPreviousPeriods)),
         }))
         .filter((item) => item.current > 0 || item.previous > 0)
         .sort((left, right) => right.current - left.current);
@@ -1156,6 +1179,8 @@ function BusinessReview({
     const currentMonthDivisor = Math.max(reportingCurrentPeriods.length, 1);
     const previousMonthDivisor = Math.max(reportingPreviousPeriods.length, 1);
     const summaryValue = (value: number, previous = false) => summaryMode === "average" ? value / (previous ? previousMonthDivisor : currentMonthDivisor) : value;
+    const spendingTreemapValue = (value: number) => summaryMode === "average" ? value / currentMonthDivisor : value;
+    const spendingTreemapUnit = summaryMode === "average" ? " kr / month" : " kr";
     const summarySuffix = summaryMode === "average" ? "Monthly average" : "Year to date";
     const waterfallSteps = [
         ...(incomeCategoryRows.length
@@ -1397,8 +1422,8 @@ function BusinessReview({
                                     ...spendingTreemapSubcategories.map((item) => `category:${item.category}`),
                                 ],
                                 values: [
-                                    ...spendingTreemapCategories.map((category) => spendingTreemapCategoryTotals.get(category) ?? 0),
-                                    ...spendingTreemapSubcategories.map((item) => item.spend),
+                                    ...spendingTreemapCategories.map((category) => spendingTreemapValue(spendingTreemapCategoryTotals.get(category) ?? 0)),
+                                    ...spendingTreemapSubcategories.map((item) => spendingTreemapValue(item.spend)),
                                 ],
                                 customdata: [
                                     ...spendingTreemapCategories.map(() => ""),
@@ -1418,10 +1443,10 @@ function BusinessReview({
                                     ...spendingTreemapSubcategories.map((item) => item.share >= (spendingTreemapFullscreen ? 0.12 : 0.6) ? "<b>%{label}</b><br>%{percentRoot:.1%}" : ""),
                                 ],
                                 textfont: { color: "#f7fffa", size: spendingTreemapFullscreen ? 11 : 11 },
-                                hovertemplate: "<b>%{label}</b><br>%{value:,.0f} kr · %{percentRoot:.1%} of spending<extra></extra>",
+                                hovertemplate: `<b>%{label}</b><br>%{value:,.0f}${spendingTreemapUnit} · %{percentRoot:.1%} of spending<extra></extra>`,
                                 pathbar: { visible: false },
                             }] as never[]}
-                            layout={{ ...sharedLayout, margin: { l: 4, r: 4, t: 8, b: 4 }, height: spendingTreemapFullscreen ? Math.max(600, window.innerHeight - 165) : 430, showlegend: false, uniformtext: { minsize: 8, mode: "hide" } } as never}
+                            layout={{ ...sharedLayout, datarevision: summaryMode, margin: { l: 4, r: 4, t: 8, b: 4 }, height: spendingTreemapFullscreen ? Math.max(600, window.innerHeight - 165) : 430, showlegend: false, uniformtext: { minsize: 8, mode: "hide" } } as never}
                             config={{ displayModeBar: false, responsive: true }}
                             useResizeHandler
                             className="business-plot spending-source-treemap"
@@ -1787,6 +1812,17 @@ export default function SpiirDashboard({ active }: { active: boolean }) {
     const yearlyVisiblePeriods = useMemo(() => visibleYearPeriods(yearly?.periods ?? [], yearWindow, excludeLatestYear), [excludeLatestYear, yearWindow, yearly?.periods]);
     const monthlyPrevPeriods = useMemo(() => previousWindow(monthly?.periods ?? [], monthlyVisiblePeriods), [monthly?.periods, monthlyVisiblePeriods]);
     const yearlyPrevPeriods = useMemo(() => previousWindow(yearly?.periods ?? [], yearlyVisiblePeriods), [yearly?.periods, yearlyVisiblePeriods]);
+    const yearlyProjection = useMemo(() => {
+        if (!monthly || !yearly) {
+            return null;
+        }
+        const year = String(new Date().getFullYear());
+        if (!yearly.periods.includes(year)) {
+            return null;
+        }
+        const periods = finishedCurrentYearPeriods(monthly.periods);
+        return periods.length > 0 ? { year, periods, monthlyRows: monthly.rows } : null;
+    }, [monthly, yearly]);
     const monthlyChartFigure = useMemo(
         () => monthly && monthlyVisiblePeriods.length > 0 ? buildPeriodChartFigure(monthly, monthlyVisiblePeriods, "month", { ...monthlyChart, bars: true, cumulative: false, stacked: false, level: "top" }, hiddenMonthlySeries) : null,
         [hiddenMonthlySeries, monthly, monthlyChart, monthlyVisiblePeriods]
@@ -1933,6 +1969,7 @@ export default function SpiirDashboard({ active }: { active: boolean }) {
                     expandedRows={expandedMonthlyRows}
                     heatmap={heatmap}
                     showPrevTotals={showPrevTotals}
+                    projection={null}
                     onExpandAll={() => setExpandedMonthlyRows(new Set(monthly.rows.map((row) => row.key)))}
                     onCollapseAll={() => setExpandedMonthlyRows(new Set())}
                     onOpenDrilldown={(row, title, periods, kind) => void handleOpenDrilldown(row, title, periods, kind)}
@@ -1959,6 +1996,7 @@ export default function SpiirDashboard({ active }: { active: boolean }) {
                     expandedRows={expandedYearlyRows}
                     heatmap={heatmap}
                     showPrevTotals={showPrevTotals}
+                    projection={yearlyProjection}
                     onExpandAll={() => setExpandedYearlyRows(new Set(yearly.rows.map((row) => row.key)))}
                     onCollapseAll={() => setExpandedYearlyRows(new Set())}
                     onOpenDrilldown={(row, title, periods, kind) => void handleOpenDrilldown(row, title, periods, kind)}

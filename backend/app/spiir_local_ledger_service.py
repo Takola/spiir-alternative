@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import datetime as dt
 import json
 import logging
 import re
@@ -18,7 +17,6 @@ from .autocategorization import (
     _suggest_categories_from_ledger,
 )
 from .config import (
-    get_runtime_settings,
     get_spiir_local_import_runs_file,
     get_spiir_local_metadata_file,
     get_spiir_local_overrides_file,
@@ -445,15 +443,6 @@ def _normalize_spiir_row(
     }
 
 
-def _cutover_date() -> str:
-    value = str(get_runtime_settings().spiir.cutover_date or "2026-05-02").strip()
-    try:
-        dt.datetime.strptime(value, "%Y-%m-%d")
-    except ValueError as exc:
-        raise ValueError(f"Invalid SPIIR_CUTOVER_DATE: {value}") from exc
-    return value
-
-
 def _normalize_bank_row(now: str, transaction: dict[str, Any], existing: dict[str, Any] | None = None) -> dict[str, Any]:
     source_id = str(transaction.get("id") or "").strip()
     original_date = str(transaction.get("original_booking_date") or transaction.get("booking_date") or "").strip() or None
@@ -508,7 +497,6 @@ def _normalize_bank_row(now: str, transaction: dict[str, Any], existing: dict[st
         "provenance": {
             "imported_from": "nordea_processed_transactions",
             "nordea_transaction_id": source_id,
-            "cutover_date": _cutover_date(),
         },
     }
 
@@ -628,6 +616,7 @@ def _normalize_local_ledger_transaction_row(row: dict[str, Any], account_lookup:
         "split_line_id": row.get("split_line_id"),
         "split_original_parent_id": row.get("split_original_parent_id"),
         "split_line_index": row.get("split_line_index"),
+        "categoryReason": row.get("category_reason"),
         "source": f"{str(row.get('source') or 'local')}-local-ledger",
     }
 
@@ -1062,7 +1051,6 @@ def warm_spiir_local_ledger_first_page_cache() -> None:
 def preview_bank_sync_into_local_ledger() -> dict[str, Any]:
     ensure_runtime_dirs()
     now = _iso_utc_now()
-    cutover_date = _cutover_date()
     bank_transactions = [item for item in load_bank_transactions().get("transactions", []) if isinstance(item, dict)]
     existing_transactions = _load_existing_transactions()
     existing_by_id = {str(item.get("id") or ""): item for item in existing_transactions}
@@ -1070,16 +1058,12 @@ def preview_bank_sync_into_local_ledger() -> dict[str, Any]:
     preview_rows: list[dict[str, Any]] = []
     would_create_count = 0
     would_update_count = 0
-    skipped_before_cutover_count = 0
     skipped_missing_booking_date_count = 0
 
     for transaction in bank_transactions:
         booking_date = str(transaction.get("booking_date") or "").strip()
         if not booking_date:
             skipped_missing_booking_date_count += 1
-            continue
-        if booking_date <= cutover_date:
-            skipped_before_cutover_count += 1
             continue
         candidate = _normalize_bank_row(now=now, transaction=transaction, existing=existing_by_id.get(f"nordea:{transaction.get('id') or ''}"))
         preview_rows.append(candidate)
@@ -1091,13 +1075,11 @@ def preview_bank_sync_into_local_ledger() -> dict[str, Any]:
     sorted_rows = _sorted_rows(preview_rows)
     return {
         "generated_at": now,
-        "cutover_date": cutover_date,
         "source_row_count": len(bank_transactions),
         "eligible_row_count": len(sorted_rows),
         "existing_row_count": len(existing_transactions),
         "would_create_count": would_create_count,
         "would_update_count": would_update_count,
-        "skipped_before_cutover_count": skipped_before_cutover_count,
         "skipped_missing_booking_date_count": skipped_missing_booking_date_count,
         "sample_rows": [
             {
@@ -1116,7 +1098,6 @@ def preview_bank_sync_into_local_ledger() -> dict[str, Any]:
 def apply_bank_sync_into_local_ledger() -> dict[str, Any]:
     ensure_runtime_dirs()
     now = _iso_utc_now()
-    cutover_date = _cutover_date()
     existing_transactions = _load_existing_transactions()
     existing_by_id = {str(item.get("id") or ""): item for item in existing_transactions}
     bank_payload = load_bank_transactions()
@@ -1124,8 +1105,7 @@ def apply_bank_sync_into_local_ledger() -> dict[str, Any]:
     eligible_new_transactions = [
         item
         for item in raw_bank_transactions
-        if str(item.get("booking_date") or "").strip() > cutover_date
-        and f"nordea:{str(item.get('id') or '').strip()}" not in existing_by_id
+        if f"nordea:{str(item.get('id') or '').strip()}" not in existing_by_id
     ]
     category_suggestions_by_transaction_id = _suggest_categories_from_ledger(
         ledger_rows=existing_transactions,
@@ -1136,16 +1116,12 @@ def apply_bank_sync_into_local_ledger() -> dict[str, Any]:
     merged_by_id = dict(existing_by_id)
     created_count = 0
     updated_count = 0
-    skipped_before_cutover_count = 0
     skipped_missing_booking_date_count = 0
 
     for transaction in bank_transactions:
         booking_date = str(transaction.get("booking_date") or "").strip()
         if not booking_date:
             skipped_missing_booking_date_count += 1
-            continue
-        if booking_date <= cutover_date:
-            skipped_before_cutover_count += 1
             continue
         transaction_id = str(transaction.get("id") or "").strip()
         suggested_category = category_suggestions_by_transaction_id.get(transaction_id)
@@ -1202,11 +1178,9 @@ def apply_bank_sync_into_local_ledger() -> dict[str, Any]:
             "id": len(import_runs) + 1,
             "type": "nordea_sync",
             "applied_at": now,
-            "cutover_date": cutover_date,
             "source_row_count": len(bank_transactions),
             "created_count": created_count,
             "updated_count": updated_count,
-            "skipped_before_cutover_count": skipped_before_cutover_count,
             "skipped_missing_booking_date_count": skipped_missing_booking_date_count,
             "ledger_row_count": len(transactions),
         }
@@ -1219,7 +1193,6 @@ def apply_bank_sync_into_local_ledger() -> dict[str, Any]:
 
     return {
         "applied_at": now,
-        "cutover_date": cutover_date,
         "source_row_count": len(bank_transactions),
         "created_count": created_count,
         "updated_count": updated_count,
@@ -1229,7 +1202,6 @@ def apply_bank_sync_into_local_ledger() -> dict[str, Any]:
         "auto_investment_count": auto_result["investment_count"],
         "auto_child_savings_account_count": auto_result["child_savings_account_count"],
         "pending_review_count": sum(1 for item in transactions if item.get("pending_review")),
-        "skipped_before_cutover_count": skipped_before_cutover_count,
         "skipped_missing_booking_date_count": skipped_missing_booking_date_count,
         "ledger_row_count": len(transactions),
         "import_run_count": len(import_runs),

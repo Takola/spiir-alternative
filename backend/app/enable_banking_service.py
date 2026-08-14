@@ -27,13 +27,13 @@ from .spiir_service import (
     UNCATEGORIZED_MAIN_CATEGORY_ID,
     UNCATEGORIZED_MAIN_CATEGORY_NAME,
 )
-from .taxonomy import built_in_categories
+from .taxonomy import built_in_categories, canonical_taxonomy_main_name
 
 logger = logging.getLogger(__name__)
 
 API_BASE = "https://api.enablebanking.com"
 ALIAS_RE = re.compile(r"[0-9A-Za-z_æøåÆØÅ-]{3,}")
-LEDGER_TAXONOMY_CACHE_VERSION = 3
+LEDGER_TAXONOMY_CACHE_VERSION = 5
 BANK_INCREMENTAL_LOOKBACK_DAYS = 7
 INCOME_DESCRIPTION_RE = re.compile(
     r"\b(l[oø]n(?:overf[oø]rsel)?|b[oø]rne-?\s*og\s*ungeydelse|dagpenge|feriepenge|pensionsudbetaling)\b",
@@ -647,10 +647,11 @@ def _build_taxonomy_payload(entries: list[dict[str, Any]]) -> dict[str, Any]:
 
     for entry in entries:
         category_key = (str(entry.get("main_category_id") or UNCATEGORIZED_MAIN_CATEGORY_ID), str(entry.get("category_id") or UNCATEGORIZED_CATEGORY_ID))
+        main_category_name = canonical_taxonomy_main_name(entry.get("main_category_name"))
         current = categories.get(category_key) or {
             "categoryType": entry.get("category_type") or "Expense",
             "mainCategoryId": category_key[0],
-            "mainCategoryName": entry.get("main_category_name") or UNCATEGORIZED_MAIN_CATEGORY_NAME,
+            "mainCategoryName": main_category_name,
             "categoryId": category_key[1],
             "categoryName": entry.get("category_name") or UNCATEGORIZED_CATEGORY_NAME,
             "usage_count": 0,

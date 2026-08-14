@@ -138,6 +138,7 @@ export interface LedgerTransaction {
     split_line_id?: string | null;
     split_original_parent_id?: string | null;
     split_line_index?: number | null;
+    categoryReason?: string | null;
     source: string;
 }
 
@@ -234,7 +235,6 @@ export interface LedgerRetrieveJobStatus {
         created_count: number;
         updated_count: number;
         autocategorized_count: number;
-        skipped_before_cutover_count: number;
         skipped_missing_booking_date_count: number;
         ledger_row_count: number;
     } | null;

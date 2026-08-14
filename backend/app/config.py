@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -25,16 +24,6 @@ def _expand_legacy_dotenv_value(value: str) -> str:
 for _path_env_name in ("SPIIR_ALT_DATA_DIR", "ENABLEBANKING_PRIVATE_KEY_PATH"):
     if _path_env_value := os.getenv(_path_env_name):
         os.environ[_path_env_name] = _expand_legacy_dotenv_value(_path_env_value)
-
-
-@dataclass(frozen=True)
-class SpiirRuntimeSettings:
-    cutover_date: str = "2026-01-01"
-
-
-@dataclass(frozen=True)
-class RuntimeSettings:
-    spiir: SpiirRuntimeSettings
 
 
 def _env(*names: str) -> str | None:
@@ -114,11 +103,3 @@ def get_spiir_rebuild_state_file() -> Path:
 
 def get_spiir_income_expense_series_cache_file() -> Path:
     return get_spiir_local_dir() / "cache" / "income_expense_series.json"
-
-
-def get_runtime_settings() -> RuntimeSettings:
-    return RuntimeSettings(
-        spiir=SpiirRuntimeSettings(
-            cutover_date=_env("SPIIR_CUTOVER_DATE", "SPIIR_ALT_CUTOVER_DATE") or "2026-01-01",
-        ),
-    )

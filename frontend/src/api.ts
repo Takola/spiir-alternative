@@ -204,10 +204,22 @@ export async function getSpiirLocalLedgerTransactionsPage(options?: { limit?: nu
 }
 
 export async function saveSpiirLocalLedgerOverrides(transactionIds: string[], patch: LedgerOverridePatch): Promise<LedgerOverrideResponse> {
+    const requestPatch = patch.category === undefined
+        ? patch
+        : {
+            ...patch,
+            category: patch.category === null ? null : {
+                categoryType: patch.category.categoryType,
+                mainCategoryId: patch.category.mainCategoryId,
+                mainCategoryName: patch.category.mainCategoryName,
+                categoryId: patch.category.categoryId,
+                categoryName: patch.category.categoryName,
+            },
+        };
     const result = await request<LedgerOverrideResponse>("/api/spiir/local-ledger/overrides", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transaction_ids: transactionIds, patch })
+        body: JSON.stringify({ transaction_ids: transactionIds, patch: requestPatch })
     });
     patchLocalLedgerCache(result);
     return result;

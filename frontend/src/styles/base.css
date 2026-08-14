@@ -1024,7 +1024,7 @@
     width: var(--ledger-page-width);
     max-width: none;
     min-height: 48px;
-    margin: 0;
+    margin: 0 0 0 var(--ledger-page-left);
     padding: 0 18px;
     border: 0;
     border-radius: 0;
@@ -1068,8 +1068,8 @@
 }
 
 .app-mode-ledger {
-    --ledger-page-left: 90px;
     --ledger-page-width: 1350px;
+    --ledger-page-left: max(0px, calc((100vw - var(--ledger-page-width)) / 2));
     position: relative;
     width: 100vw;
     min-height: 100vh;
@@ -1086,7 +1086,7 @@
     position: absolute;
     top: 0;
     bottom: 0;
-    left: 0;
+    left: var(--ledger-page-left);
     width: var(--ledger-page-width);
     min-height: 100%;
     background: rgb(255, 255, 255);

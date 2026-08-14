@@ -9,7 +9,7 @@ CATEGORY_CATALOG: dict[str, list[str]] = {
     "Transport": ["Bil-, MC-, bådlån o.l.", "Brændstof", "Bilforsikring & autohjælp", "Ejerafgift/grøn afgift", "Bus, tog, færge o.l.", "Taxi", "Parkering", "Værksted & reservedele", "Anden transport"],
     "Husholdning": ["Dagligvarer", "Kiosk, bager & specialbutikker", "Kantine- & frokostordning"],
     "Andre leveomkostninger": ["Apotek & medicin", "Behandling & læger", "Underholds- & børnebidrag", "Institution", "Fagforening & a-kasse", "Livs- & ulykkesforsikring", "Sundheds- & sygeforsikring", "Briller & kontaktlinser", "TV & streaming", "Telefoni & internet", "Studieudgifter", "Foreninger & kontingenter"],
-    "Privatforbrug": ["Fastfood & takeaway", "Bar, cafe & restaurant", "Tøj, sko & accessories", "Møbler & boligudstyr", "Elektronik & computerudstyr", "Film, musik & læsestof", "Online services & software", "Hobby & sportsudstyr", "Biograf, koncerter & forlystelser", "Frisør & personlig pleje", "Sport & fritid", "Hus & havehjælp", "Spil & legetøj", "Tips & lotto", "Babyudstyr", "Kæledyr", "Gaver & velgørenhed", "Tobak & alkohol", "Kontanthævning & check", "Højskole- & kursusophold", "Serviceydelser & rådgivning", "Andet privatforbrug"],
+    "Privatforbrug": ["Fastfood & takeaway", "Bar, cafe & restaurant", "Tøj, sko & accessories", "Møbler & boligudstyr", "Elektronik & computerudstyr", "Film, musik & læsestof", "Online services & software", "Hobby & sportsudstyr", "Biograf, koncerter & forlystelser", "Frisør & personlig pleje", "Sport & fritid", "Hus & havehjælp", "Spil & legetøj", "Tips & lotto", "Babyudstyr", "Kæledyr", "Gaver & velgørenhed", "Gavekort", "Tobak & alkohol", "Kontanthævning & check", "Højskole- & kursusophold", "Serviceydelser & rådgivning", "Andet privatforbrug"],
     "Ferie": ["Fly & Hotel", "Billeje", "Sommerhus & camping", "Ferieaktiviteter", "Rejseforsikring"],
     "Diverse": ["Ukendt", "Bankgebyrer", "Rykkergebyrer", "Bøder & afgifter", "Restskat", "Offentligt gebyr", "Ikke kategoriseret"],
     "Lån & gæld": ["Studielån", "Forbrugslån", "Private lån (venner & familie)", "Udlånsrenter"],
@@ -30,6 +30,11 @@ UNCATEGORIZED_CATEGORY_ID = "synthetic-uncategorized"
 def _slug(value: str) -> str:
     ascii_value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
     return re.sub(r"[^a-z0-9]+", "-", ascii_value.lower()).strip("-")
+
+
+def canonical_taxonomy_main_name(value: Any) -> str:
+    main_name = str(value or UNCATEGORIZED_MAIN_CATEGORY_NAME)
+    return "Andre leveomkostninger" if main_name == "Andet" else main_name
 
 
 def built_in_categories() -> list[dict[str, Any]]:

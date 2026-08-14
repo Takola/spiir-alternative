@@ -1,0 +1,14 @@
+1. Go to https://enablebanking.com and create an account
+2. go to https://enablebanking.com/cp/applications
+3. click add a new application. pick production. pick generate in browser. fill out the application like you want or like this
+Aplication name: My application
+Allowed redirect URLS: https://your-server.com/
+Application description: For personal use
+Email for data protection matters: YOUR@EMAIL.COM
+Privacy URL of the application: https://your
+Terms URL of the application: https://your
+4. click register
+5. you will get a .pem file move it to "\data\local_secrets\enablebanking\X1234567-8X9X-12X3-X45X-6789123456X7.pem"
+6. Install python and get the backed requirements and install npm for the frontend
+7. auth with the bank, see the .md or ask the llm to open the right page for you
+8. run start-local.bat
