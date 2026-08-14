@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import logging
 import math
 import os
 import re
@@ -36,6 +37,8 @@ from .taxonomy import (
     UNCATEGORIZED_MAIN_CATEGORY_ID,
     UNCATEGORIZED_MAIN_CATEGORY_NAME,
 )
+
+logger = logging.getLogger(__name__)
 
 SKIP_IS_EXTRAORDINARY = True
 SKIP_ACCOUNT_NAMES = {"Andelsboliglån"}
@@ -554,8 +557,8 @@ def _write_income_expense_series_cache(response: dict[str, Any]) -> None:
                 "response": response,
             },
         )
-    except OSError:
-        return
+    except OSError as exc:
+        logger.warning("Could not write the income/expense cache: %s", exc)
 
 
 def load_spiir_income_expense_series() -> dict[str, Any]:

@@ -4,7 +4,10 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 ROOT_DIR = Path(__file__).resolve().parents[2]
+load_dotenv(ROOT_DIR / ".env", override=False)
 
 
 @dataclass(frozen=True)
@@ -82,6 +85,10 @@ def get_spiir_local_import_runs_file() -> Path:
 
 def get_spiir_local_overrides_file() -> Path:
     return get_spiir_local_dir() / "overrides.json"
+
+
+def get_spiir_local_metadata_file() -> Path:
+    return get_spiir_local_dir() / "metadata.json"
 
 
 def get_spiir_rebuild_state_file() -> Path:

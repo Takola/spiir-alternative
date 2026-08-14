@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import logging
 import re
 import tempfile
 from datetime import UTC, datetime
@@ -19,6 +20,7 @@ from .autocategorization import (
 from .config import (
     get_runtime_settings,
     get_spiir_local_import_runs_file,
+    get_spiir_local_metadata_file,
     get_spiir_local_overrides_file,
     get_spiir_local_transactions_file,
     get_spiir_raw_export_file,
@@ -57,8 +59,10 @@ from .spiir_service import (
 )
 from .storage import create_backup, ensure_runtime_dirs
 
+logger = logging.getLogger(__name__)
+
 LOCAL_LEDGER_FIRST_PAGE_CACHE_LIMIT = 300
-LOCAL_LEDGER_FIRST_PAGE_CACHE_VERSION = 1
+LOCAL_LEDGER_FIRST_PAGE_CACHE_VERSION = 2
 CANONICAL_SPLIT_ROW_KEYS = [
     "amount",
     "split_group_id",
@@ -131,6 +135,7 @@ def _local_ledger_first_page_cache_signature(limit: int) -> dict[str, Any]:
         "sources": {
             "transactions": _file_cache_stat(get_spiir_local_transactions_file()),
             "overrides": _file_cache_stat(get_spiir_local_overrides_file()),
+            "metadata": _file_cache_stat(get_spiir_local_metadata_file()),
         },
     }
 
@@ -165,8 +170,8 @@ def _write_local_ledger_first_page_cache(limit: int, response: dict[str, Any]) -
     }
     try:
         _write_json(cache_file, payload)
-    except OSError:
-        return
+    except OSError as exc:
+        logger.warning("Could not write the local-ledger first-page cache: %s", exc)
 
 
 def _clear_local_ledger_transactions_memory_cache() -> None:
@@ -190,30 +195,26 @@ def _sort_local_ledger_rows_desc(rows: list[dict[str, Any]]) -> list[dict[str, A
 
 
 def _build_local_ledger_transactions_meta(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    bank_payload = load_bank_transactions()
+    stored_meta = _read_json(get_spiir_local_metadata_file())
+    if not isinstance(stored_meta, dict):
+        stored_meta = _bank_metadata_snapshot(load_bank_transactions())
+        _write_json(get_spiir_local_metadata_file(), stored_meta)
     accounts_by_id: dict[str, dict[str, Any]] = {}
-    account_lookup: dict[str, dict[str, str]] = {}
-    for account in bank_payload.get("accounts") or []:
+    account_lookup = stored_meta.get("account_lookup") if isinstance(stored_meta.get("account_lookup"), dict) else {}
+    for account in stored_meta.get("accounts") or []:
         if not isinstance(account, dict):
             continue
         account_id = str((account.get("account_id") or {}).get("iban") or "").strip()
         if account_id:
             accounts_by_id[account_id] = account
-    for transaction in bank_payload.get("transactions") or []:
-        if not isinstance(transaction, dict):
-            continue
-        source_id = str(transaction.get("id") or "").strip()
-        account_id = str(transaction.get("account_iban") or "").strip()
-        if source_id and account_id:
-            account_lookup[source_id] = {"id": account_id, "name": str(transaction.get("account_name") or "").strip()}
     for row in rows:
         account_id = str(row.get("source_account_id") or "").strip()
         account_name = str(row.get("source_account_name") or "").strip()
         if account_id and account_id not in accounts_by_id:
             accounts_by_id[account_id] = {"account_id": {"iban": account_id}, "name": account_name}
     return {
-        "last_retrieved_at": bank_payload.get("last_retrieved_at"),
-        "last_retrieve_duration_seconds": bank_payload.get("last_retrieve_duration_seconds"),
+        "last_retrieved_at": stored_meta.get("last_retrieved_at"),
+        "last_retrieve_duration_seconds": stored_meta.get("last_retrieve_duration_seconds"),
         "transaction_count": len(rows),
         "pending_review_count": sum(1 for item in rows if bool(item.get("pending_review"))),
         "accounts": list(accounts_by_id.values()),
@@ -222,10 +223,33 @@ def _build_local_ledger_transactions_meta(rows: list[dict[str, Any]]) -> dict[st
 
 
 def _bank_retrieve_meta() -> dict[str, Any]:
-    bank_meta = load_bank_transactions()
+    bank_meta = _read_json(get_spiir_local_metadata_file())
+    if not isinstance(bank_meta, dict):
+        bank_meta = _bank_metadata_snapshot(load_bank_transactions())
     return {
         "last_retrieved_at": bank_meta.get("last_retrieved_at"),
         "last_retrieve_duration_seconds": bank_meta.get("last_retrieve_duration_seconds"),
+    }
+
+
+def _bank_metadata_snapshot(bank_payload: dict[str, Any]) -> dict[str, Any]:
+    account_lookup: dict[str, dict[str, str]] = {}
+    for transaction in bank_payload.get("transactions") or []:
+        if not isinstance(transaction, dict):
+            continue
+        source_id = str(transaction.get("id") or "").strip()
+        account_id = str(transaction.get("account_iban") or "").strip()
+        if source_id and account_id:
+            account_lookup[source_id] = {
+                "id": account_id,
+                "name": str(transaction.get("account_name") or "").strip(),
+            }
+    return {
+        "updated_at": _iso_utc_now(),
+        "last_retrieved_at": bank_payload.get("last_retrieved_at"),
+        "last_retrieve_duration_seconds": bank_payload.get("last_retrieve_duration_seconds"),
+        "accounts": [item for item in bank_payload.get("accounts") or [] if isinstance(item, dict)],
+        "account_lookup": account_lookup,
     }
 
 
@@ -1095,7 +1119,8 @@ def apply_bank_sync_into_local_ledger() -> dict[str, Any]:
     cutover_date = _cutover_date()
     existing_transactions = _load_existing_transactions()
     existing_by_id = {str(item.get("id") or ""): item for item in existing_transactions}
-    raw_bank_transactions = [item for item in load_bank_transactions().get("transactions", []) if isinstance(item, dict)]
+    bank_payload = load_bank_transactions()
+    raw_bank_transactions = [item for item in bank_payload.get("transactions", []) if isinstance(item, dict)]
     eligible_new_transactions = [
         item
         for item in raw_bank_transactions
@@ -1169,6 +1194,7 @@ def apply_bank_sync_into_local_ledger() -> dict[str, Any]:
     import_runs_file = get_spiir_local_import_runs_file()
     create_backup(transactions_file)
     _write_json(transactions_file, transactions)
+    _write_json(get_spiir_local_metadata_file(), _bank_metadata_snapshot(bank_payload))
 
     import_runs = _load_import_runs()
     import_runs.append(

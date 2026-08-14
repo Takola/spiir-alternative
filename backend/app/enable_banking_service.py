@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import logging
 import os
 import re
 import threading
@@ -27,6 +28,8 @@ from .spiir_service import (
     UNCATEGORIZED_MAIN_CATEGORY_NAME,
 )
 from .taxonomy import built_in_categories
+
+logger = logging.getLogger(__name__)
 
 API_BASE = "https://api.enablebanking.com"
 ALIAS_RE = re.compile(r"[0-9A-Za-z_æøåÆØÅ-]{3,}")
@@ -776,9 +779,9 @@ def retrieve_bank_transactions(
             balance = _current_booked_balance(balance_payload)
             if balance is not None:
                 account_with_balance["balance"] = balance
-        except Exception:
+        except (requests.RequestException, RuntimeError, ValueError) as exc:
             # A missing balance must not prevent transaction retrieval for the account.
-            pass
+            logger.warning("Could not retrieve balance for account %s: %s", account_uid, exc)
         transactions: list[dict[str, Any]] = []
         continuation_key = None
         page_number = 0
