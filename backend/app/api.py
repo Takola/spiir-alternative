@@ -1,9 +1,17 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
-from typing import Annotated, Any
+from datetime import UTC, date, datetime
+from typing import Annotated, Self
 
 from fastapi import FastAPI, HTTPException, Query, status
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StringConstraints,
+    model_validator,
+)
 
 from .config import get_data_dir
 from .enable_banking_service import (
@@ -31,6 +39,52 @@ from .spiir_service import (
     schedule_spiir_rebuild_if_due,
 )
 from .storage import ensure_runtime_dirs
+
+NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+HashtagString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+CategoryId = NonEmptyString | int
+
+
+class ApiRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class LedgerCategoryRequest(ApiRequest):
+    categoryType: NonEmptyString
+    mainCategoryId: CategoryId | None = None
+    mainCategoryName: NonEmptyString
+    categoryId: CategoryId
+    categoryName: NonEmptyString
+
+
+class LedgerSplitRequest(ApiRequest):
+    id: NonEmptyString
+    amount: float = Field(allow_inf_nan=False)
+    note: str = ""
+    category: LedgerCategoryRequest
+
+
+class LedgerOverridePatchRequest(ApiRequest):
+    category: LedgerCategoryRequest | None = None
+    booking_date: date | None = None
+    note: str = ""
+    hashtags: list[HashtagString] = Field(default_factory=list)
+    append_hashtags: list[HashtagString] = Field(default_factory=list)
+    remove_hashtags: list[HashtagString] = Field(default_factory=list)
+    is_extraordinary: StrictBool = False
+    pending_review: StrictBool = False
+    splits: list[LedgerSplitRequest] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def require_a_change(self) -> Self:
+        if not self.model_fields_set:
+            raise ValueError("Override patch must contain at least one change")
+        return self
+
+
+class LedgerOverrideRequest(ApiRequest):
+    transaction_ids: list[NonEmptyString] = Field(min_length=1)
+    patch: LedgerOverridePatchRequest
 
 
 def iso_utc() -> str:
@@ -116,13 +170,10 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     @app.post("/api/spiir/local-ledger/overrides")
-    def local_ledger_overrides(payload: dict[str, Any]) -> dict[str, object]:
+    def local_ledger_overrides(payload: LedgerOverrideRequest) -> dict[str, object]:
         try:
-            transaction_ids = [str(item) for item in payload.get("transaction_ids") or [] if str(item).strip()]
-            patch = payload.get("patch", {})
-            if not isinstance(patch, dict):
-                raise ValueError("Invalid local ledger patch")
-            return save_spiir_local_ledger_overrides(transaction_ids, patch)
+            patch = payload.patch.model_dump(mode="json", exclude_unset=True)
+            return save_spiir_local_ledger_overrides(payload.transaction_ids, patch)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
