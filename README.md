@@ -36,7 +36,7 @@ data/                                  private runtime data; never commit it
 .env                                   private local configuration; never commit it
 start-local.bat                        Windows launcher for backend + frontend
 start.ps1                              PowerShell launcher alternative
-simple_guide.txt                       short setup note for humans 
+simple_guide.txt                       short setup note for humans
 ```
 
 ## Windows setup
