@@ -1476,6 +1476,80 @@ function BusinessReview({
                 ) : <p className="spending-source-empty">No spending sources are available for this period.</p>}
             </section>
 
+            {spendingTreemapTotal > 0 ? (
+                <section className="panel business-chart-panel spending-sunburst-panel business-chart-clickable">
+                    <div className="business-chart-heading">
+                        <div>
+                            <h2>Expense category sunburst</h2>
+                            <span>Main categories on the inner ring and subcategories on the outer ring · click a segment to filter the spending view above</span>
+                        </div>
+                    </div>
+                    <Plot
+                        data={[{
+                            type: "sunburst",
+                            ids: [
+                                "expense-root",
+                                ...spendingTreemapCategories.map((category) => `category:${category}`),
+                                ...spendingTreemapSubcategories.map((item) => `subcategory:${item.key}`),
+                            ],
+                            labels: [
+                                "Expenses",
+                                ...spendingTreemapCategories,
+                                ...spendingTreemapSubcategories.map((item) => item.label),
+                            ],
+                            parents: [
+                                "",
+                                ...spendingTreemapCategories.map(() => "expense-root"),
+                                ...spendingTreemapSubcategories.map((item) => `category:${item.category}`),
+                            ],
+                            values: [
+                                spendingTreemapTotal,
+                                ...spendingTreemapCategories.map((category) => spendingTreemapCategoryTotals.get(category) ?? 0),
+                                ...spendingTreemapSubcategories.map((item) => item.spend),
+                            ],
+                            branchvalues: "total",
+                            marker: {
+                                colors: [
+                                    "#607069",
+                                    ...spendingTreemapCategories.map((category) => spendingCategoryColor.get(category)),
+                                    ...spendingTreemapSubcategories.map((item) => spendingCategoryColor.get(item.category)),
+                                ],
+                                line: { color: "rgba(255,255,255,.4)", width: 1 },
+                            },
+                            textinfo: "label+percent root",
+                            insidetextorientation: "radial",
+                            hovertemplate: "<b>%{label}</b><br>%{value:,.0f} kr · %{percentRoot:.1%} of spending<extra></extra>",
+                        }] as never[]}
+                        layout={{
+                            ...sharedLayout,
+                            margin: { l: 12, r: 12, t: 12, b: 12 },
+                            height: 520,
+                            showlegend: false,
+                            uniformtext: { minsize: 9, mode: "hide" },
+                        } as never}
+                        config={{ displayModeBar: false, responsive: true }}
+                        useResizeHandler
+                        className="business-plot spending-sunburst-plot"
+                        onClick={(event) => {
+                            const point = event.points[0] as unknown as { id?: unknown } | undefined;
+                            const id = String(point?.id ?? "");
+                            if (id.startsWith("category:")) {
+                                setSpendingCategory(id.slice("category:".length));
+                                setSpendingSubcategory("");
+                                setShowAllSpendingSources(false);
+                                return;
+                            }
+                            if (id.startsWith("subcategory:")) {
+                                const [category, subcategory] = id.slice("subcategory:".length).split("|");
+                                setSpendingCategory(category);
+                                setSpendingSubcategory(subcategory);
+                                setShowAllSpendingSources(false);
+                            }
+                        }}
+                    />
+                </section>
+            ) : null}
+
             <section className="panel business-driver-table">
                 <div className="business-chart-heading"><h2>Cost drivers</h2><span>{summaryMode === "average" ? "Average per compared month" : "Current YTD versus comparable prior period"}</span></div>
                 <table>

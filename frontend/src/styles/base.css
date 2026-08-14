@@ -509,6 +509,15 @@
         min-height: 430px;
     }
 
+    .spending-sunburst-panel {
+        margin-top: 1rem;
+    }
+
+    .spending-sunburst-plot {
+        width: 100%;
+        min-height: 520px;
+    }
+
     .spending-source-list {
         display: grid;
         min-width: 0;
