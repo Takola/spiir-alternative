@@ -48,7 +48,7 @@ def test_difference_excludes_investments() -> None:
     overview = _make_period_overview(frame, [period], "yyyymm")
     difference = next(row for row in overview["rows"] if row["key"] == "diff")
 
-    assert difference["label"] == "Difference"
+    assert difference["label"] == "Result"
     assert difference["values"][period] == 41673
 
 

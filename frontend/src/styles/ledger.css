@@ -834,6 +834,7 @@
     grid-template-columns: minmax(0, 1fr) 2rem;
     width: 220px;
     height: 25px;
+    overflow: hidden;
     border: 1px solid rgb(204, 204, 204);
     border-radius: 4px;
     background: rgb(255, 255, 255);
@@ -848,18 +849,15 @@
     height: 23px;
     padding: 3px 4px 3px 3px;
     border: 0;
-    border-radius: 0;
+    border-radius: 3px 0 0 3px;
     background: rgb(255, 255, 255);
     color: inherit;
     font: inherit;
     line-height: normal;
-    border-top-right-radius: 0;
-    border-bottom-right-radius: 0;
 }
 
 .ledger-category-picker > button {
-    border-top-left-radius: 0;
-    border-bottom-left-radius: 0;
+    border-radius: 0 3px 3px 0;
     padding: 0;
     background: rgb(245, 245, 245);
     color: rgb(51, 51, 51);
@@ -867,6 +865,11 @@
     border-left: 0;
     height: 23px;
     font: inherit;
+}
+
+.ledger-category-picker input::selection {
+    background: rgb(183, 218, 202);
+    color: rgb(18, 55, 42);
 }
 
 .ledger-category-options {
@@ -990,31 +993,45 @@
     color: #eff8f2;
 }
 
+.theme-dark .ledger-category-picker input::selection {
+    background: #79bd91;
+    color: #081a10;
+}
+
 .theme-dark .ledger-category-picker > button {
     background: #245039;
     color: #eff8f2;
 }
 
 .theme-dark .ledger-category-options,
-.theme-dark .ledger-category-sub-list {
+.theme-dark .ledger-category-sub-list,
+html[data-theme="dark"] .ledger-category-options,
+html[data-theme="dark"] .ledger-category-sub-list {
     border-color: #405448;
     background: #17271d;
     color: #eff8f2;
 }
 
-.theme-dark .ledger-category-options button {
+.theme-dark .ledger-category-options button,
+html[data-theme="dark"] .ledger-category-options button {
     color: #eff8f2;
 }
 
 .theme-dark .ledger-category-options button small,
 .theme-dark .ledger-category-options small,
-.theme-dark .ledger-category-options button.unused:not(.active) {
-    color: #9eb1a5;
+.theme-dark .ledger-category-options button.unused:not(.active),
+html[data-theme="dark"] .ledger-category-options button small,
+html[data-theme="dark"] .ledger-category-options small,
+html[data-theme="dark"] .ledger-category-options button.unused:not(.active) {
+    color: #8aa193;
 }
 
 .theme-dark .ledger-category-options button:hover,
 .theme-dark .ledger-category-options button:focus,
-.theme-dark .ledger-category-options button.active {
+.theme-dark .ledger-category-options button.active,
+html[data-theme="dark"] .ledger-category-options button:hover,
+html[data-theme="dark"] .ledger-category-options button:focus,
+html[data-theme="dark"] .ledger-category-options button.active {
     background: #245039;
 }
 

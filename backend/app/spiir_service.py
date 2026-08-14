@@ -664,7 +664,7 @@ def _make_period_overview(df: pd.DataFrame, periods: list[str], period_column: s
             row.update(meta)
         rows.append(row)
 
-    add_row("diff", "Difference", 0, None, {period: income.get(period, 0) + expense.get(period, 0) for period in periods}, {"kind": "diff"})
+    add_row("diff", "Result", 0, None, {period: income.get(period, 0) + expense.get(period, 0) for period in periods}, {"kind": "diff"})
     add_row("income", "Indkomst", 0, None, income.to_dict(), {"kind": "income", "categoryType": "Income"})
 
     income_df = filtered[filtered["categoryType"] == "Income"]

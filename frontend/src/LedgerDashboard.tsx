@@ -1582,8 +1582,22 @@ function IncomeExpenseOverview({ series, onOpenSunburst }: { series: SpiirIncome
                             const isHover = hoveredMonth === month.month;
                             return (
                                 <g key={month.month} onMouseEnter={() => setHoveredMonth(month.month)}>
-                                    <rect x={centerX - barWidth / 2} y={incomeY} width={barWidth} height={zeroY - incomeY} className={month.is_current_month ? "ledger-income-bar current" : "ledger-income-bar"} />
-                                    <rect x={centerX - barWidth / 2} y={zeroY} width={barWidth} height={expenseY - zeroY} className={month.is_current_month ? "ledger-expense-bar current" : "ledger-expense-bar"} />
+                                    {(() => {
+                                        const incH = zeroY - incomeY;
+                                        const incR = Math.min(4, incH / 2);
+                                        const dIncome = `M ${centerX - barWidth / 2} ${zeroY} L ${centerX - barWidth / 2} ${incomeY + incR} A ${incR} ${incR} 0 0 1 ${centerX - barWidth / 2 + incR} ${incomeY} L ${centerX + barWidth / 2 - incR} ${incomeY} A ${incR} ${incR} 0 0 1 ${centerX + barWidth / 2} ${incomeY + incR} L ${centerX + barWidth / 2} ${zeroY} Z`;
+                                        
+                                        const expH = expenseY - zeroY;
+                                        const expR = Math.min(4, expH / 2);
+                                        const dExpense = `M ${centerX - barWidth / 2} ${zeroY} L ${centerX + barWidth / 2} ${zeroY} L ${centerX + barWidth / 2} ${expenseY - expR} A ${expR} ${expR} 0 0 1 ${centerX + barWidth / 2 - expR} ${expenseY} L ${centerX - barWidth / 2 + expR} ${expenseY} A ${expR} ${expR} 0 0 1 ${centerX - barWidth / 2} ${expenseY - expR} Z`;
+                                        
+                                        return (
+                                            <>
+                                                {incH > 0 && <path d={dIncome} className={month.is_current_month ? "ledger-income-bar current" : "ledger-income-bar"} />}
+                                                {expH > 0 && <path d={dExpense} className={month.is_current_month ? "ledger-expense-bar current" : "ledger-expense-bar"} />}
+                                            </>
+                                        );
+                                    })()}
                                     <line x1={centerX} x2={centerX} y1={zeroY} y2={zeroY + 5} className="ledger-income-tick" />
                                     <text x={centerX} y={plot.top + plot.height + 20} textAnchor="middle" className="ledger-income-axis-label">{shortMonthLabel(month.month)}</text>
                                     <rect
@@ -2368,7 +2382,8 @@ export default function LedgerDashboard({
     const filteredTransactions = useMemo(() => {
         const activeFilters = { periodFilter, periodStart: customPeriodStart, periodEnd: customPeriodEnd, visibilityFilter, categoryFilter, searchText, showTransfersAlways, outflowsOnly: initialFilter?.outflowsOnly };
         if (embedded && pinnedDrilldownRowIds) {
-            return displayTransactions.filter((row) => pinnedDrilldownRowIds.has(row.rowId) && rowMatchesFilters(row, activeFilters));
+            const needle = searchText.trim().toLowerCase();
+            return displayTransactions.filter((row) => pinnedDrilldownRowIds.has(row.rowId) && (!needle || transactionTextForRow(row).toLowerCase().includes(needle)));
         }
         return displayTransactions.filter((row) => rowMatchesFilters(row, activeFilters));
     }, [categoryFilter, customPeriodEnd, customPeriodStart, displayTransactions, embedded, periodFilter, pinnedDrilldownRowIds, searchText, showTransfersAlways, visibilityFilter]);

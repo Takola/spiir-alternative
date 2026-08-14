@@ -760,9 +760,7 @@ function OverviewSection({
         [orderedRows]
     );
     const allExpanded = expandableKeys.length > 0 && expandableKeys.every((key) => expandedRows.has(key));
-    const showProjection = periodKind === "year"
-        && projection !== null
-        && visiblePeriods.includes(projection.year);
+    const showProjection = periodKind === "year" && projection !== null;
 
     return (
         <section className="panel spiir-panel">
@@ -1073,7 +1071,7 @@ function BusinessReview({
     const [spendingTreemapFullscreen, setSpendingTreemapFullscreen] = useState(false);
 
     useEffect(() => {
-        if (!selectedYear || !years.includes(selectedYear)) {
+        if (!selectedYear || (!years.includes(selectedYear) && selectedYear !== "last_12")) {
             setSelectedYear(years[years.length - 1] ?? "");
         }
     }, [selectedYear, years]);
@@ -1091,12 +1089,34 @@ function BusinessReview({
         };
     }, [spendingTreemapFullscreen]);
 
+    const isLTM = selectedYear === "last_12";
     const yearIndex = years.indexOf(selectedYear);
-    const compareYear = yearIndex > 0 ? years[yearIndex - 1] : "";
-    const currentPeriods = section.periods.filter((period) => period.startsWith(`${selectedYear}-`));
-    const monthCount = currentPeriods.length;
-    const previousPeriods = section.periods.filter((period) => period.startsWith(`${compareYear}-`)).slice(0, monthCount);
+    
+    let currentPeriods: string[] = [];
+    let previousPeriods: string[] = [];
+    let compareYear = "";
+
     const today = new Date();
+    if (isLTM) {
+        compareYear = "Prior 12 months";
+        for (let i = 12; i > 0; i--) {
+            const d = new Date(today.getFullYear(), today.getMonth() - i + 1, 1);
+            currentPeriods.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+            const pd = new Date(today.getFullYear() - 1, today.getMonth() - i + 1, 1);
+            previousPeriods.push(`${pd.getFullYear()}-${String(pd.getMonth() + 1).padStart(2, "0")}`);
+        }
+        currentPeriods = currentPeriods.filter((p) => section.periods.includes(p));
+        const prevHasAll = previousPeriods.every((p) => section.periods.includes(p));
+        if (!prevHasAll) {
+            previousPeriods = [];
+            compareYear = "";
+        }
+    } else {
+        compareYear = yearIndex > 0 ? years[yearIndex - 1] : "";
+        currentPeriods = section.periods.filter((period) => period.startsWith(`${selectedYear}-`));
+        const monthCount = currentPeriods.length;
+        previousPeriods = section.periods.filter((period) => period.startsWith(`${compareYear}-`)).slice(0, monthCount);
+    }
     const isLiveYear = selectedYear === String(today.getFullYear());
     const comparableCutoffDay = isLiveYear ? today.getDate() : null;
     const incomeRow = section.rows.find((row) => row.key === "income") ?? null;
@@ -1108,7 +1128,7 @@ function BusinessReview({
     const latestCurrentPeriod = currentPeriods[currentPeriods.length - 1] ?? "";
     const latestMonthIncome = comparableTransactionTotal(transactions, incomeRow, [latestCurrentPeriod], null)
         ?? Number(incomeRow?.values[latestCurrentPeriod] ?? 0);
-    const holdUnpaidLiveMonth = isLiveYear && latestCurrentPeriod === liveMonth && latestMonthIncome <= 0;
+    const holdUnpaidLiveMonth = !isLTM && isLiveYear && latestCurrentPeriod === liveMonth && latestMonthIncome <= 0;
     const reportingCurrentPeriods = holdUnpaidLiveMonth ? currentPeriods.slice(0, -1) : currentPeriods;
     const reportingPreviousPeriods = previousPeriods.slice(0, reportingCurrentPeriods.length);
 
@@ -1137,6 +1157,35 @@ function BusinessReview({
     const previousExpenseByMonth = previousPeriods.map((period) => comparableMonthValue(expenseRow, period, true));
     const currentInvestmentByMonth = currentPeriods.map((period) => comparableMonthValue(investmentRow, period, true));
     const previousInvestmentByMonth = previousPeriods.map((period) => comparableMonthValue(investmentRow, period, true));
+
+    const fullYearPeriods = isLTM ? currentPeriods : Array.from({ length: 12 }, (_, i) => `${selectedYear || "2000"}-${String(i + 1).padStart(2, "0")}`);
+    const fullYearPreviousPeriods = isLTM ? previousPeriods : Array.from({ length: 12 }, (_, i) => `${compareYear || "2000"}-${String(i + 1).padStart(2, "0")}`);
+    const fullYearMonthLabels = fullYearPeriods.map((period) => new Intl.DateTimeFormat("en", { month: "short" }).format(new Date(`${period}-01T00:00:00`)));
+
+    let runningCurrent = 0;
+    const fullYearCurrentCumulative = fullYearPeriods.map((period) => {
+        if (currentPeriods.includes(period)) {
+            const income = comparableMonthValue(incomeRow, period);
+            const expense = comparableMonthValue(expenseRow, period, true);
+            const inv = comparableMonthValue(investmentRow, period, true);
+            runningCurrent += (income - expense - inv);
+            return runningCurrent;
+        }
+        return null;
+    });
+
+    let runningPrev = 0;
+    const fullYearPreviousCumulative = fullYearPreviousPeriods.map((period) => {
+        if (period && section.periods.includes(period)) {
+            const income = comparableMonthValue(incomeRow, period);
+            const expense = comparableMonthValue(expenseRow, period, true);
+            const inv = comparableMonthValue(investmentRow, period, true);
+            runningPrev += (income - expense - inv);
+            return runningPrev;
+        }
+        return null;
+    });
+
     const cumulative = (values: number[]) => {
         let total = 0;
         return values.map((value) => (total += value));
@@ -1245,6 +1294,7 @@ function BusinessReview({
                     <label className="business-year-select">
                         <span>Reporting year</span>
                         <select value={selectedYear} onChange={(event) => setSelectedYear(event.target.value)}>
+                            <option value="last_12">Last 12 full months</option>
                             {years.map((year) => <option key={year} value={year}>{year}</option>)}
                         </select>
                     </label>
@@ -1307,11 +1357,11 @@ function BusinessReview({
                 </section>
 
                 <section className="panel business-chart-panel business-chart-clickable">
-                    <div className="business-chart-heading"><div><h2>Cumulative net cash flow</h2><span>How the year builds month by month · click to inspect</span></div><button type="button" className="business-chart-drill-button" onClick={() => cashFlowRow && onOpenDrilldown(cashFlowRow, `Cash after investing · ${selectedYear} YTD`, reportingCurrentPeriods)}>Drill down YTD</button></div>
+                    <div className="business-chart-heading"><div><h2>Cumulative net cash flow</h2><span>How the year builds month by month · click to inspect</span></div><button type="button" className="business-chart-drill-button" onClick={() => cashFlowRow && onOpenDrilldown(cashFlowRow, `Cash after investing · ${selectedYear === "last_12" ? "LTM" : selectedYear + " YTD"}`, reportingCurrentPeriods)}>Drill down YTD</button></div>
                     <Plot
                         data={[
-                            { type: "scatter", mode: "lines+markers", name: selectedYear, x: monthLabels, y: cumulative(currentNetByMonth), line: { color: "#09ab58", width: 3, shape: "spline" }, marker: { size: 7, color: "#09ab58" }, fill: "tozeroy", fillcolor: "rgba(9,171,88,.08)", customdata: currentPeriods, hovertemplate: "%{y:,.0f} kr<extra></extra>" },
-                            { type: "scatter", mode: "lines+markers", name: compareYear, x: monthLabels, y: cumulative(previousNetByMonth), line: { color: "#87958e", width: 2, dash: "dot", shape: "spline" }, marker: { size: 6 }, customdata: previousPeriods, hovertemplate: "%{y:,.0f} kr<extra></extra>" },
+                            { type: "scatter", mode: "lines+markers", name: selectedYear === "last_12" ? "Last 12 months" : selectedYear, x: fullYearMonthLabels, y: fullYearCurrentCumulative, line: { color: "#09ab58", width: 3, shape: "spline" }, marker: { size: 7, color: "#09ab58" }, fill: "tozeroy", fillcolor: "rgba(9,171,88,.08)", customdata: fullYearPeriods, hovertemplate: "%{y:,.0f} kr<extra></extra>" },
+                            { type: "scatter", mode: "lines+markers", name: compareYear, x: fullYearMonthLabels, y: fullYearPreviousCumulative, line: { color: "#87958e", width: 2, dash: "dot", shape: "spline" }, marker: { size: 6 }, customdata: fullYearPreviousPeriods, hovertemplate: "%{y:,.0f} kr<extra></extra>" },
                         ] as never[]}
                         layout={{ ...sharedLayout, height: 360, xaxis: modernXAxis, yaxis: modernYAxis } as never}
                         config={{ displayModeBar: false, responsive: true }} useResizeHandler className="business-plot"
@@ -1813,15 +1863,19 @@ export default function SpiirDashboard({ active }: { active: boolean }) {
     const monthlyPrevPeriods = useMemo(() => previousWindow(monthly?.periods ?? [], monthlyVisiblePeriods), [monthly?.periods, monthlyVisiblePeriods]);
     const yearlyPrevPeriods = useMemo(() => previousWindow(yearly?.periods ?? [], yearlyVisiblePeriods), [yearly?.periods, yearlyVisiblePeriods]);
     const yearlyProjection = useMemo(() => {
-        if (!monthly || !yearly) {
+        if (!monthly || !yearly || yearly.periods.length === 0) {
             return null;
         }
-        const year = String(new Date().getFullYear());
-        if (!yearly.periods.includes(year)) {
+        const year = yearly.periods[yearly.periods.length - 1];
+        const yearMonths = monthly.periods.filter((period) => period.startsWith(`${year}-`));
+        
+        // If the year is fully complete (12 months), no need for a projection
+        if (yearMonths.length >= 12) {
             return null;
         }
-        const periods = finishedCurrentYearPeriods(monthly.periods);
-        return periods.length > 0 ? { year, periods, monthlyRows: monthly.rows } : null;
+        
+        // Use all available months in that year for the projection basis
+        return yearMonths.length > 0 ? { year, periods: yearMonths, monthlyRows: monthly.rows } : null;
     }, [monthly, yearly]);
     const monthlyChartFigure = useMemo(
         () => monthly && monthlyVisiblePeriods.length > 0 ? buildPeriodChartFigure(monthly, monthlyVisiblePeriods, "month", { ...monthlyChart, bars: true, cumulative: false, stacked: false, level: "top" }, hiddenMonthlySeries) : null,
@@ -1900,13 +1954,13 @@ export default function SpiirDashboard({ active }: { active: boolean }) {
                         <div className="panel-header compact-header spiir-plot-header">
                             <div>
                                 <h2>{tab === "monthly" ? "Månedschart" : "Årchart"}</h2>
-                                <span>{tab === "monthly" ? "Income and expenses share one axis; net difference overlays them" : "Yearly development and category composition"}</span>
+                                <span>{tab === "monthly" ? "Income and expenses share one axis; result overlays them" : "Yearly development and category composition"}</span>
                             </div>
                             {tab === "monthly" ? <div className="spiir-series-legend" aria-label="Vis eller skjul serier">
                                 {[
                                     ["income", "Income"],
                                     ["expense", "Expenses"],
-                                    ["diff", "Net difference"],
+                                    ["diff", "Result"],
                                 ].map(([key, label]) => (
                                     <button
                                         key={key}
