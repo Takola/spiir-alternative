@@ -15,8 +15,6 @@ dist/
 data/*
 !data/.gitkeep
 
-# A historical POSIX-style .env value could create this literal folder on Windows.
-/$PWD/
 
 backend/data/*
 !backend/data/.gitkeep

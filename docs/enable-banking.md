@@ -22,7 +22,7 @@ POST /api/bank/retrieve/start
 
 Relevant files:
 
-- `scripts/enablebanking_probe.py` lists providers, creates a consent URL, exchanges the code, and can fetch a diagnostic transaction archive.
+- `backend/enablebanking_probe.py` lists providers, creates a consent URL, exchanges the code, and can fetch a diagnostic transaction archive.
 - `backend/app/enable_banking_service.py` implements application retrieval, status, normalization, and account balance loading.
 - `backend/app/spiir_local_ledger_service.py` merges normalized rows into the canonical local ledger.
 - `backend/app/api.py` exposes `/api/bank/retrieve/start` and `/api/bank/retrieve/status`.
@@ -77,13 +77,13 @@ Never use `VITE_*` for these values. Vite variables are bundled for browsers. Th
 From the repository root:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\enablebanking_probe.py aspsps
+.\.venv\Scripts\python.exe backend\enablebanking_probe.py aspsps
 ```
 
 Optionally filter the printed Danish personal AIS list:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\enablebanking_probe.py aspsps --name "part of bank name"
+.\.venv\Scripts\python.exe backend\enablebanking_probe.py aspsps --name "part of bank name"
 ```
 
 Use the provider name exactly as returned in the next command.
@@ -93,7 +93,7 @@ Use the provider name exactly as returned in the next command.
 Generate a consent URL. Choose a duration within the provider's advertised limit:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\enablebanking_probe.py auth-url --days 170 --aspsp-name "<provider name>" --aspsp-country DK
+.\.venv\Scripts\python.exe backend\enablebanking_probe.py auth-url --days 170 --aspsp-name "<provider name>" --aspsp-country DK
 ```
 
 Open the printed URL and approve access with your bank. The browser returns to the registered redirect URL with a short-lived `code` query parameter. A missing callback page is harmless for this manual flow if the code is visible in the address bar.
@@ -101,7 +101,7 @@ Open the printed URL and approve access with your bank. The browser returns to t
 Exchange it promptly:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\enablebanking_probe.py session --code "<code>"
+.\.venv\Scripts\python.exe backend\enablebanking_probe.py session --code "<code>"
 ```
 
 This writes:
@@ -118,13 +118,13 @@ The session contains the accounts made available by consent. Renew consent when 
 The probe can fetch one account by its zero-based index:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\enablebanking_probe.py transactions --account-index 0 --strategy longest
+.\.venv\Scripts\python.exe backend\enablebanking_probe.py transactions --account-index 0 --strategy longest
 ```
 
 Repeat with indices `1`, `2`, and so on if needed. For an explicit window:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\enablebanking_probe.py transactions --account-index 0 --strategy default --date-from 2026-01-01 --date-to 2026-01-31
+.\.venv\Scripts\python.exe backend\enablebanking_probe.py transactions --account-index 0 --strategy default --date-from 2026-01-01 --date-to 2026-01-31
 ```
 
 The probe follows `continuation_key` pagination and writes diagnostic raw responses below `data/transactions/raw/enablebanking/`.

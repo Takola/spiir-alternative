@@ -8,17 +8,17 @@ The application is bank-provider-neutral. During consent you choose an available
 
 ### Transaction review
 
-![Local ledger transaction review](screenshots/local-ledger-review.png)
+![Local ledger transaction review](docs/screenshots/local-ledger-review.png)
 
 ### Monthly overview
 
-![Monthly income and expense chart](screenshots/spiir-monthly-chart-and-table.jpeg)
+![Monthly income and expense chart](docs/screenshots/spiir-monthly-chart-and-table.jpeg)
 
 ### Category drilldown
 
-![Category sunburst drilldown](screenshots/spiir-sunburst-drilldown.png)
+![Category sunburst drilldown](docs/screenshots/spiir-sunburst-drilldown.png)
 
-![Category transactions](screenshots/spiir-category-transactions.png)
+![Category transactions](docs/screenshots/spiir-category-transactions.png)
 
 ## Architecture
 
@@ -161,9 +161,9 @@ Why: writes are already atomic and backed up, the data remains inspectable and p
 
 Reconsider SQLite when concurrent writers, multi-user access, substantially larger datasets, complex ad-hoc queries, or measurable JSON read/write bottlenecks become real requirements. A future migration should preserve transaction IDs and overrides and include a verified rollback/export path.
 
-## Tests and CI
+## Tests
 
-Run the same checks used by `.github/workflows/ci.yml`:
+Run these checks before changing the application:
 
 ```powershell
 Set-Location backend
@@ -173,8 +173,6 @@ Set-Location ..\frontend
 npm test
 npm run build
 ```
-
-GitHub Actions runs backend lint/tests and frontend tests/build on pushes and pull requests.
 
 ## Privacy checklist
 
