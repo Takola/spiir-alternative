@@ -14,7 +14,7 @@ export default function ReferenceApp() {
         document.documentElement.dataset.theme = darkMode ? "dark" : "light";
     }, [darkMode]);
 
-    return <main className={`${tab === "ledger" ? "app-mode-nordea" : "app-shell app-shell-wide"} ${darkMode ? "theme-dark" : ""}`}>
+    return <main className={`${tab === "ledger" ? "app-mode-ledger" : "app-shell app-shell-wide"} ${darkMode ? "theme-dark" : ""}`}>
         <nav className="top-nav-panel" aria-label="Reference navigation">
             <div className="top-nav-start">
                 <strong>Spiir alternative</strong>

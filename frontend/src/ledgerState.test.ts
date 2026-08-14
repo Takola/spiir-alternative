@@ -14,7 +14,7 @@ function makeTransaction(overrides: Partial<LedgerTransaction>): LedgerTransacti
         hashtags: [],
         is_extraordinary: false,
         splits: [],
-        source: "nordea-local-ledger",
+        source: "ledger-local-ledger",
         ...overrides,
     };
 }

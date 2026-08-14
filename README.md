@@ -8,7 +8,7 @@ The application is bank-provider-neutral. During consent you choose an available
 
 ### Transaction review
 
-![Local ledger transaction review](screenshots/nordea-local-ledger-review.png)
+![Local ledger transaction review](screenshots/local-ledger-review.png)
 
 ### Monthly overview
 
@@ -149,7 +149,7 @@ This is still a security decision: Vite's `/api` proxy effectively gives every v
 
 ## Compatibility with existing data
 
-Some stored transaction IDs, source fields, import-run labels, CSS classes, and fallback paths retain `nordea` in their internal value. They are legacy compatibility keys so existing overrides and ledgers continue to match; they do not restrict the selected Enable Banking provider. Do not rewrite those IDs in existing JSON by hand.
+Some stored transaction IDs, source fields, import-run labels, and fallback paths retain `nordea` in their internal value. They are legacy compatibility keys so existing overrides and ledgers continue to match; they do not restrict the selected Enable Banking provider. Do not rewrite those IDs in existing JSON by hand.
 
 An older Spiir postings export can still be imported once from `data/spiir/raw/all_entries.json` with the local-ledger preview/apply routes. New activity should enter through `/api/bank/retrieve/start` and the canonical local ledger.
 

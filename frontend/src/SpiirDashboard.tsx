@@ -1913,7 +1913,7 @@ export default function SpiirDashboard({ active }: { active: boolean }) {
             ) : null}
             {ledgerDrilldownModal ? (
                 <div className="modal-backdrop" onClick={() => setLedgerDrilldownModal(null)}>
-                    <section className="nordea-drilldown-modal" onClick={(event) => event.stopPropagation()}>
+                    <section className="ledger-drilldown-modal" onClick={(event) => event.stopPropagation()}>
                         <LedgerDashboard
                             key={`${ledgerDrilldownModal.title}|${ledgerDrilldownModal.periodFilter ?? "all"}|${ledgerDrilldownModal.categoryFilter?.categoryId ?? ""}|${ledgerDrilldownModal.searchText ?? ""}`}
                             active

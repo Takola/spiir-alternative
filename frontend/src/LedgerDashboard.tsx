@@ -1,12 +1,14 @@
-import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
 
 import { getLedgerRetrieveStatus, getLedgerTaxonomy, getSpiirIncomeExpenseSeries, getSpiirLocalLedgerTransactions, getSpiirLocalLedgerTransactionsPage, getSpiirOverview, getSpiirStatus, getSpiirTransactions, invalidateLocalLedgerCache, invalidateSpiirCache, rebuildSpiirFromLocal, saveSpiirLocalLedgerOverrides, scheduleSpiirRebuildFromLocal, startLedgerRetrieveJob } from "./api";
 import { formatCurrency, formatDateTime, formatDkk, formatIsoDate, formatMobileIsoDate, formatMonthLabel, formatPostingAmount, formatSignedPostingAmount, formatWholeDkk, formatWholeNumber } from "./formatting";
 import { computeAllTransactionsLoaded, localLedgerFirstPage, mergeUpdatedTransactions } from "./ledgerState";
-import SpiirSunburstModal, { type SunburstState } from "./SpiirSunburstModal";
+import type { SunburstState } from "./SpiirSunburstModal";
 import { formatSplitDraftAmount, parseSplitDraftAmount } from "./splitAmount";
 import type { LedgerAccount, LedgerCategoryOption, LedgerHashtagOption, LedgerOverridePatch, LedgerRetrieveJobStatus, LedgerSplitLine, LedgerTaxonomyResponse, LedgerTransaction, LedgerTransactionsResponse, SpiirIncomeExpenseMonth, SpiirIncomeExpenseSeriesResponse, SpiirOverviewResponse, SpiirStatusResponse, SpiirTransaction } from "./types";
+
+const SpiirSunburstModal = lazy(() => import("./SpiirSunburstModal"));
 
 type PeriodFilter = "all" | "custom" | `year:${string}` | `month:${string}`;
 type VisibilityFilter = "all" | "income" | "expense" | "investment" | "operating" | "cashflow" | "bills" | "consumption" | "category" | "uncategorized" | "extraordinary";
@@ -446,17 +448,17 @@ function isTransferCategory(category: LedgerCategoryOption): boolean {
 function ledgerRowClassName(row: LedgerDisplayRow, selected: boolean, selectedCount: number): string | undefined {
     const classes = [];
     if (selected) {
-        classes.push("nordea-selected-row");
+        classes.push("ledger-selected-row");
         if (selectedCount === 1) {
-            classes.push("nordea-editor-row");
+            classes.push("ledger-editor-row");
         }
     } else if (isPendingReview(row.transaction)) {
-        classes.push("nordea-pending-row");
+        classes.push("ledger-pending-row");
     } else if (row.transaction.is_extraordinary) {
-        classes.push("nordea-extraordinary-row");
+        classes.push("ledger-extraordinary-row");
     }
     if (isTransferCategory(row.category)) {
-        classes.push("nordea-transfer-row");
+        classes.push("ledger-transfer-row");
     }
     return classes.length > 0 ? classes.join(" ") : undefined;
 }
@@ -992,9 +994,9 @@ function CategorySelect({
     }
 
     const categoryOptions = open && (!searchOnly || normalizedQuery) ? (
-        <div className="nordea-category-options" ref={menuRef} style={menuStyle}>
+        <div className="ledger-category-options" ref={menuRef} style={menuStyle}>
             {normalizedQuery ? (
-                <div className="nordea-category-search-list">
+                <div className="ledger-category-search-list">
                     {searchResults.map((result) => (
                         <button
                             type="button"
@@ -1014,7 +1016,7 @@ function CategorySelect({
                 </div>
             ) : (
                 <>
-                    <div className="nordea-category-main-list">
+                    <div className="ledger-category-main-list">
                         {categoryGroups.map((group) => (
                             <button
                                 type="button"
@@ -1056,11 +1058,11 @@ function CategorySelect({
                                 })()}
                             >
                                 <span>{group.mainName}</span>
-                                {group.mainName === "Ikke kategoriseret" ? null : <span className="nordea-category-arrow">›</span>}
+                                {group.mainName === "Ikke kategoriseret" ? null : <span className="ledger-category-arrow">›</span>}
                             </button>
                         ))}
                     </div>
-                        {activeGroup?.mainName === "Ikke kategoriseret" ? null : <div className="nordea-category-sub-list" style={submenuStyle}>
+                        {activeGroup?.mainName === "Ikke kategoriseret" ? null : <div className="ledger-category-sub-list" style={submenuStyle}>
                         {activeGroup?.categories.map((category) => (
                             <button
                                 type="button"
@@ -1080,12 +1082,12 @@ function CategorySelect({
                     </div>}
                 </>
             )}
-            {normalizedQuery && filteredCategories.length === 0 ? <span className="nordea-category-empty">Ingen match</span> : null}
+            {normalizedQuery && filteredCategories.length === 0 ? <span className="ledger-category-empty">Ingen match</span> : null}
         </div>
     ) : null;
 
     return (
-        <div className={searchOnly ? "nordea-category-picker search-only" : "nordea-category-picker"} ref={pickerRef}>
+        <div className={searchOnly ? "ledger-category-picker search-only" : "ledger-category-picker"} ref={pickerRef}>
             <input
                 ref={inputRef}
                 type="text"
@@ -1332,7 +1334,7 @@ function HashtagTextarea({
     }
 
     return (
-        <div className="nordea-note-suggest-wrap">
+        <div className="ledger-note-suggest-wrap">
             <textarea
                 ref={textareaRef}
                 value={value}
@@ -1372,7 +1374,7 @@ function HashtagTextarea({
                 }}
             />
             {suggestions.length > 0 ? (
-                <div className="nordea-note-suggest-list">
+                <div className="ledger-note-suggest-list">
                     {suggestions.map((hashtag, index) => (
                         <button
                             type="button"
@@ -1458,7 +1460,7 @@ function SearchField({
     }, [value, resetKey]);
 
     return (
-        <div className="nordea-search-input-wrap">
+        <div className="ledger-search-input-wrap">
             <input
                 ref={inputRef}
                 type="search"
@@ -1480,7 +1482,7 @@ function SearchField({
             {draft ? (
                 <button
                     type="button"
-                    className="nordea-search-clear"
+                    className="ledger-search-clear"
                     aria-label="Nulstil søgning"
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={() => {
@@ -1526,7 +1528,7 @@ function IncomeExpenseOverview({ series, onOpenSunburst }: { series: SpiirIncome
     const barWidth = Math.min(38, Math.max(22, step * 0.55));
     const hoveredCenterX = hoveredIndex >= 0 ? plot.left + step * hoveredIndex + step / 2 : null;
     const tooltipStyle = hoveredCenterX === null ? undefined : ({
-        "--nordea-income-tooltip-x": `${(hoveredCenterX / 650) * 100}%`,
+        "--ledger-income-tooltip-x": `${(hoveredCenterX / 650) * 100}%`,
     } as CSSProperties);
     const mobileMax = Math.max(1, ...mobileMonths.flatMap((month) => [month.income, month.expense]));
     const mobileAverageIncome = mobileMonths.length ? mobileMonths.reduce((sum, month) => sum + month.income, 0) / mobileMonths.length : 0;
@@ -1549,23 +1551,23 @@ function IncomeExpenseOverview({ series, onOpenSunburst }: { series: SpiirIncome
     }
 
     return (
-        <section className="nordea-income-overview" aria-label="Indkomst og udgifter">
-            <div className="nordea-income-desktop">
-                <div className="nordea-income-chart-head">
+        <section className="ledger-income-overview" aria-label="Indkomst og udgifter">
+            <div className="ledger-income-desktop">
+                <div className="ledger-income-chart-head">
                     <select value={activePeriod?.label ?? periodLabel} onChange={(event) => setPeriodLabel(event.target.value)}>
                         {series.periods.map((period) => (
                             <option key={period.label} value={period.label}>{period.label}</option>
                         ))}
                     </select>
                 </div>
-                <div className="nordea-income-svg-wrap" onMouseLeave={() => setHoveredMonth(null)}>
+                <div className="ledger-income-svg-wrap" onMouseLeave={() => setHoveredMonth(null)}>
                     <svg viewBox="0 0 650 220" role="img" aria-label="Indkomst og udgifter pr. måned">
                         {[-roundedMax, 0, roundedMax].map((tick) => {
                             const y = scale(tick);
                             return (
                                 <g key={tick}>
-                                    <line x1={plot.left} x2={plot.left + plot.width} y1={y} y2={y} className="nordea-income-grid" />
-                                    <text x={plot.left - 8} y={y + 4} textAnchor="end" className="nordea-income-axis-label">{formatChartAmount(tick)}</text>
+                                    <line x1={plot.left} x2={plot.left + plot.width} y1={y} y2={y} className="ledger-income-grid" />
+                                    <text x={plot.left - 8} y={y + 4} textAnchor="end" className="ledger-income-axis-label">{formatChartAmount(tick)}</text>
                                 </g>
                             );
                         })}
@@ -1576,16 +1578,16 @@ function IncomeExpenseOverview({ series, onOpenSunburst }: { series: SpiirIncome
                             const isHover = hoveredMonth === month.month;
                             return (
                                 <g key={month.month} onMouseEnter={() => setHoveredMonth(month.month)}>
-                                    <rect x={centerX - barWidth / 2} y={incomeY} width={barWidth} height={zeroY - incomeY} className={month.is_current_month ? "nordea-income-bar current" : "nordea-income-bar"} />
-                                    <rect x={centerX - barWidth / 2} y={zeroY} width={barWidth} height={expenseY - zeroY} className={month.is_current_month ? "nordea-expense-bar current" : "nordea-expense-bar"} />
-                                    <line x1={centerX} x2={centerX} y1={zeroY} y2={zeroY + 5} className="nordea-income-tick" />
-                                    <text x={centerX} y={plot.top + plot.height + 20} textAnchor="middle" className="nordea-income-axis-label">{shortMonthLabel(month.month)}</text>
+                                    <rect x={centerX - barWidth / 2} y={incomeY} width={barWidth} height={zeroY - incomeY} className={month.is_current_month ? "ledger-income-bar current" : "ledger-income-bar"} />
+                                    <rect x={centerX - barWidth / 2} y={zeroY} width={barWidth} height={expenseY - zeroY} className={month.is_current_month ? "ledger-expense-bar current" : "ledger-expense-bar"} />
+                                    <line x1={centerX} x2={centerX} y1={zeroY} y2={zeroY + 5} className="ledger-income-tick" />
+                                    <text x={centerX} y={plot.top + plot.height + 20} textAnchor="middle" className="ledger-income-axis-label">{shortMonthLabel(month.month)}</text>
                                     <rect
                                         x={centerX - step / 2}
                                         y={plot.top}
                                         width={step}
                                         height={plot.height}
-                                        className={isHover ? "nordea-income-hover-zone active clickable" : "nordea-income-hover-zone clickable"}
+                                        className={isHover ? "ledger-income-hover-zone active clickable" : "ledger-income-hover-zone clickable"}
                                         role="button"
                                         tabIndex={0}
                                         aria-label={`Åbn Spiir sunburst for ${longMonthLabel(month.month)}`}
@@ -1602,7 +1604,7 @@ function IncomeExpenseOverview({ series, onOpenSunburst }: { series: SpiirIncome
                         })}
                         <polyline
                             points={desktopMonths.map((month, index) => `${plot.left + step * index + step / 2},${scale(month.net)}`).join(" ")}
-                            className="nordea-net-line"
+                            className="ledger-net-line"
                         />
                         {desktopMonths.map((month, index) => {
                             const centerX = plot.left + step * index + step / 2;
@@ -1614,7 +1616,7 @@ function IncomeExpenseOverview({ series, onOpenSunburst }: { series: SpiirIncome
                                     cx={centerX}
                                     cy={y}
                                     r={isHover ? 6 : 4}
-                                    className={isHover ? "nordea-net-point active clickable" : "nordea-net-point clickable"}
+                                    className={isHover ? "ledger-net-point active clickable" : "ledger-net-point clickable"}
                                     role="button"
                                     tabIndex={0}
                                     aria-label={`Åbn Spiir sunburst for ${longMonthLabel(month.month)}`}
@@ -1630,7 +1632,7 @@ function IncomeExpenseOverview({ series, onOpenSunburst }: { series: SpiirIncome
                         })}
                     </svg>
                     {hovered ? (
-                        <div className="nordea-income-tooltip" style={tooltipStyle}>
+                        <div className="ledger-income-tooltip" style={tooltipStyle}>
                             <div>
                                 <small>{longMonthLabel(hovered.month)}</small>
                                 <span>RESULTAT</span>
@@ -1646,17 +1648,17 @@ function IncomeExpenseOverview({ series, onOpenSunburst }: { series: SpiirIncome
                     ) : null}
                 </div>
             </div>
-            <div className="nordea-income-mobile">
+            <div className="ledger-income-mobile">
                 {selectedMobile ? (
-                    <div className="nordea-income-mobile-head">
+                    <div className="ledger-income-mobile-head">
                         <div><span>{monthLabel(selectedMobile.month)}</span><strong>{formatWholeDkk(selectedMobile.income)}</strong><small>Gns. {formatWholeDkk(mobileAverageIncome)}</small></div>
                         <div><span>Udgifter</span><strong>{formatWholeDkk(selectedMobile.expense)}</strong><small>Gns. {formatWholeDkk(mobileAverageExpense)}</small></div>
                     </div>
                 ) : null}
-                <div className="nordea-income-mobile-bars">
+                <div className="ledger-income-mobile-bars">
                     {mobileMonths.map((month) => (
                         <button key={month.month} type="button" className={selectedMobile?.month === month.month ? "active" : ""} onClick={() => setSelectedMobileMonth(month.month)}>
-                            <span className="nordea-income-mobile-bar-stack">
+                            <span className="ledger-income-mobile-bar-stack">
                                 <i className="income" style={{ height: `${Math.max(2, (month.income / mobileMax) * 74)}px` }} />
                                 <i className="expense" style={{ height: `${Math.max(2, (month.expense / mobileMax) * 74)}px` }} />
                             </span>
@@ -1702,25 +1704,25 @@ function MobileReviewRow({
 
     return (
         <article
-            id={`nordea-mobile-row-${row.rowId}`}
+            id={`ledger-mobile-row-${row.rowId}`}
             className={[
-                "nordea-mobile-row",
+                "ledger-mobile-row",
                 expanded ? "expanded" : null,
                 !expanded && pending ? "pending" : null,
                 isTransferCategory(row.category) ? "transfer" : null,
             ].filter(Boolean).join(" ")}
             onClick={() => onOpen(row, !expanded && isUncategorizedCategory(row.category))}
         >
-            <div className="nordea-mobile-row-main">
-                <div className="nordea-mobile-row-text">
+            <div className="ledger-mobile-row-main">
+                <div className="ledger-mobile-row-text">
                     <strong>{row.transaction.description}</strong>
                     <span>{isUncategorizedCategory(row.category) ? "Ikke kategoriseret" : categoryLabelForRow(row)}</span>
                     {note ? <em>{note}</em> : null}
                 </div>
-                <div className="nordea-mobile-row-meta">
+                <div className="ledger-mobile-row-meta">
                     <strong className={row.amount > 0 ? "positive" : ""}>{formatMobileAmount(row.amount)}</strong>
                     <span>{formatMobileTxDate(row.transaction.booking_date)}</span>
-                    <div className="nordea-mobile-markers">
+                    <div className="ledger-mobile-markers">
                         {pending ? <small>Pending</small> : null}
                         {row.isSplitChild ? <small>Split</small> : null}
                         {row.transaction.is_extraordinary ? <small>Ekstra</small> : null}
@@ -1728,7 +1730,7 @@ function MobileReviewRow({
                 </div>
             </div>
             {expanded ? (
-                <div className="nordea-mobile-row-editor" onClick={(event) => event.stopPropagation()}>
+                <div className="ledger-mobile-row-editor" onClick={(event) => event.stopPropagation()}>
                     <label>
                         Kategori
                         <CategorySelect
@@ -1745,8 +1747,8 @@ function MobileReviewRow({
                         Note
                         <HashtagTextarea value={noteText} hashtags={hashtags} onChange={setNoteText} rows={3} placeholder="Skriv note og tags" />
                     </label>
-                    <div className="nordea-mobile-row-actions">
-                        <button type="button" className="nordea-mobile-split-action" onClick={() => onSplit(row)} disabled={editControlsDisabled}>
+                    <div className="ledger-mobile-row-actions">
+                        <button type="button" className="ledger-mobile-split-action" onClick={() => onSplit(row)} disabled={editControlsDisabled}>
                             Split
                         </button>
                         <button type="button" onClick={() => onClose(row, noteText)} disabled={editControlsDisabled}>
@@ -1774,7 +1776,7 @@ function SortHeader({
 }) {
     const active = sortKey === activeSortKey;
     return (
-        <button type="button" className={active ? "nordea-sort-header active" : "nordea-sort-header"} onClick={() => onSort(sortKey)}>
+        <button type="button" className={active ? "ledger-sort-header active" : "ledger-sort-header"} onClick={() => onSort(sortKey)}>
             <span>{label}</span>
             <span aria-hidden="true">{active ? (direction === "asc" ? "▲" : "▼") : ""}</span>
         </button>
@@ -2452,7 +2454,7 @@ export default function LedgerDashboard({
         function closeOnOutside(event: MouseEvent): void {
             const target = event.target as Node;
             const targetElement = target instanceof Element ? target : null;
-            const insideCategoryPortal = Boolean(targetElement?.closest(".nordea-category-options"));
+            const insideCategoryPortal = Boolean(targetElement?.closest(".ledger-category-options"));
             if (!visibilityPanelRef.current?.contains(target) && !visibilityButtonRef.current?.contains(target) && !insideCategoryPortal) {
                 setVisibilityPanelOpen(false);
             }
@@ -2492,7 +2494,7 @@ export default function LedgerDashboard({
         }
         const table = tableContainer.querySelector("table");
         const tableHead = tableContainer.querySelector("thead");
-        const selectedRows = Array.from(tableContainer.querySelectorAll<HTMLTableRowElement>("tbody tr.nordea-selected-row"));
+        const selectedRows = Array.from(tableContainer.querySelectorAll<HTMLTableRowElement>("tbody tr.ledger-selected-row"));
         if (!table || selectedRows.length === 0) {
             setEditPanelTop(0);
             return;
@@ -2643,10 +2645,10 @@ export default function LedgerDashboard({
             if (!(target instanceof Element)) {
                 return false;
             }
-            if (target.closest(".nordea-category-picker")) {
+            if (target.closest(".ledger-category-picker")) {
                 return false;
             }
-            if (target instanceof HTMLInputElement && target.type === "checkbox" && target.closest(".nordea-posting-table-container")) {
+            if (target instanceof HTMLInputElement && target.type === "checkbox" && target.closest(".ledger-posting-table-container")) {
                 return false;
             }
             const isEditable = target instanceof HTMLInputElement
@@ -2967,7 +2969,7 @@ export default function LedgerDashboard({
         if (!opening || !focusCategoryInput) {
             return;
         }
-        const input = document.getElementById(`nordea-mobile-row-${row.rowId}`)?.querySelector<HTMLInputElement>(".nordea-category-picker input");
+        const input = document.getElementById(`ledger-mobile-row-${row.rowId}`)?.querySelector<HTMLInputElement>(".ledger-category-picker input");
         input?.focus();
         input?.select();
     }
@@ -3071,9 +3073,9 @@ export default function LedgerDashboard({
     const spiirNeedsRebuild = Boolean(spiirStatus?.rebuild_required);
 
     return (
-        <section className={embedded ? "nordea-poster nordea-poster-embedded" : "nordea-poster"}>
+        <section className={embedded ? "ledger-poster ledger-poster-embedded" : "ledger-poster"}>
             {embedded ? (
-                <header className="nordea-embedded-header">
+                <header className="ledger-embedded-header">
                     <div>
                         <p className="eyebrow">Poster</p>
                         <h2>{initialFilter?.title ?? "Poster"}</h2>
@@ -3083,16 +3085,16 @@ export default function LedgerDashboard({
             ) : null}
             {error ? <p className="error-banner">{error}</p> : null}
             {retrievePanelOpen ? (
-                <section className="nordea-retrieve-panel" aria-live="polite">
-                    <p className="nordea-retrieve-panel-title">
+                <section className="ledger-retrieve-panel" aria-live="polite">
+                    <p className="ledger-retrieve-panel-title">
                         {retrieveChecking
                             ? "Tjekker om hentning blev færdig i baggrunden..."
                             : retrieveJobStatus?.current_phase || "Henter seneste transaktioner fra banken..."}
                     </p>
-                    <div className="nordea-retrieve-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={retrieveProgress}>
-                        <span className="nordea-retrieve-progress-fill" style={{ width: `${retrieveProgress}%` }} />
+                    <div className="ledger-retrieve-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={retrieveProgress}>
+                        <span className="ledger-retrieve-progress-fill" style={{ width: `${retrieveProgress}%` }} />
                     </div>
-                    <p className="nordea-retrieve-panel-meta">
+                    <p className="ledger-retrieve-panel-meta">
                         Forventet tid: ca. {Math.round(retrieveExpectedMs / 1000)} sek
                         {data?.last_retrieve_duration_seconds ? ` (sidst ${Math.round(data.last_retrieve_duration_seconds)} sek)` : ""}
                     </p>
@@ -3140,14 +3142,14 @@ export default function LedgerDashboard({
                     ) : null}
                 </section>
             ) : null}
-            <section className="nordea-poster-controls">
-                <div className="nordea-filter-bar">
-                    <div className="nordea-spiir-filter-shell">
-                        <div className="nordea-spiir-filter-strip">
+            <section className="ledger-poster-controls">
+                <div className="ledger-filter-bar">
+                    <div className="ledger-spiir-filter-shell">
+                        <div className="ledger-spiir-filter-strip">
                             <span>Viser</span>
                             <button
                                 type="button"
-                                className="nordea-spiir-filter-button"
+                                className="ledger-spiir-filter-button"
                                 ref={visibilityButtonRef}
                                 onClick={() => setVisibilityPanelOpen((current) => !current)}
                             >
@@ -3155,7 +3157,7 @@ export default function LedgerDashboard({
                             </button>
                             <span>fra</span>
                             <select
-                                className="nordea-spiir-filter-select"
+                                className="ledger-spiir-filter-select"
                                 value={periodFilter}
                                 onChange={(event) => {
                                     setPeriodFilter(event.target.value as PeriodFilter);
@@ -3177,13 +3179,13 @@ export default function LedgerDashboard({
                                 </optgroup>
                             </select>
                             <span>med teksten</span>
-                            <div className="nordea-spiir-search-wrap">
+                            <div className="ledger-spiir-search-wrap">
                                 <SearchField value={searchText} resetKey={searchResetKey} onCommit={setSearchText} onClear={resetSearchToLatest} />
                             </div>
-                            <div className="nordea-spiir-filter-actions">
+                            <div className="ledger-spiir-filter-actions">
                                 {saving ? (
-                                    <span className="nordea-save-indicator" aria-live="polite">
-                                        <span className="nordea-saving-spinner" aria-hidden="true" />
+                                    <span className="ledger-save-indicator" aria-live="polite">
+                                        <span className="ledger-saving-spinner" aria-hidden="true" />
                                         Gemmer
                                     </span>
                                 ) : null}
@@ -3208,7 +3210,7 @@ export default function LedgerDashboard({
                             </div>
                             <button
                                 type="button"
-                                className="nordea-spiir-reset-link"
+                                className="ledger-spiir-reset-link"
                                 onClick={() => {
                                     setVisibilityFilter("all");
                                     setCategoryFilter(null);
@@ -3228,25 +3230,25 @@ export default function LedgerDashboard({
                         </div>
 
                         {visibilityPanelOpen ? (
-                            <div className="nordea-spiir-visibility-panel" ref={visibilityPanelRef}>
+                            <div className="ledger-spiir-visibility-panel" ref={visibilityPanelRef}>
                                 <h3>Vis</h3>
-                                <label className="nordea-spiir-radio-row">
+                                <label className="ledger-spiir-radio-row">
                                     <input type="radio" checked={visibilityFilter === "all"} onChange={() => setVisibilityFilter("all")} />
                                     <span>Alle poster</span>
                                 </label>
-                                <label className="nordea-spiir-radio-row">
+                                <label className="ledger-spiir-radio-row">
                                     <input type="radio" checked={visibilityFilter === "bills"} onChange={() => setVisibilityFilter("bills")} />
                                     <span>Alle regninger</span>
                                 </label>
-                                <label className="nordea-spiir-radio-row">
+                                <label className="ledger-spiir-radio-row">
                                     <input type="radio" checked={visibilityFilter === "consumption"} onChange={() => setVisibilityFilter("consumption")} />
                                     <span>Alt forbrug</span>
                                 </label>
-                                <label className="nordea-spiir-radio-row">
+                                <label className="ledger-spiir-radio-row">
                                     <input type="radio" checked={visibilityFilter === "investment"} onChange={() => setVisibilityFilter("investment")} />
                                     <span>Investering &amp; pension</span>
                                 </label>
-                                <div className="nordea-spiir-radio-row nordea-spiir-category-row">
+                                <div className="ledger-spiir-radio-row ledger-spiir-category-row">
                                     <input
                                         type="radio"
                                         checked={visibilityFilter === "category"}
@@ -3265,15 +3267,15 @@ export default function LedgerDashboard({
                                         placeholder="Vælg kategori"
                                     />
                                 </div>
-                                <label className="nordea-spiir-radio-row">
+                                <label className="ledger-spiir-radio-row">
                                     <input type="radio" checked={visibilityFilter === "uncategorized"} onChange={() => setVisibilityFilter("uncategorized")} />
                                     <span>Ikke kategoriserede poster</span>
                                 </label>
-                                <label className="nordea-spiir-radio-row">
+                                <label className="ledger-spiir-radio-row">
                                     <input type="radio" checked={visibilityFilter === "extraordinary"} onChange={() => setVisibilityFilter("extraordinary")} />
                                     <span>Ekstraordinære poster</span>
                                 </label>
-                                <div className="nordea-spiir-visibility-footer">
+                                <div className="ledger-spiir-visibility-footer">
                                     <label>
                                         <input
                                             type="checkbox"
@@ -3283,7 +3285,7 @@ export default function LedgerDashboard({
                                         />
                                         <span>Vis altid kontooverførsler, udlæg og ignorer</span>
                                     </label>
-                                    <button type="button" className="nordea-spiir-close-link" onClick={() => setVisibilityPanelOpen(false)}>
+                                    <button type="button" className="ledger-spiir-close-link" onClick={() => setVisibilityPanelOpen(false)}>
                                         Luk
                                     </button>
                                 </div>
@@ -3291,7 +3293,7 @@ export default function LedgerDashboard({
                         ) : null}
                     </div>
                 </div>
-                <div className="nordea-poster-stats">
+                <div className="ledger-poster-stats">
                     <div>
                         <span>Viser</span>
                         <strong>{loading ? "..." : `${filteredTransactions.length} af ${displayTransactions.length}`}</strong>
@@ -3306,7 +3308,7 @@ export default function LedgerDashboard({
                     </div>
                 </div>
                 {isMobileLayout ? (
-                    <div className="nordea-mobile-review-bar">
+                    <div className="ledger-mobile-review-bar">
                         <button type="button" className={!mobilePendingOnly ? "active" : ""} onClick={() => setMobilePendingOnly(false)}>
                             Seneste
                         </button>
@@ -3315,7 +3317,7 @@ export default function LedgerDashboard({
                         </button>
                     </div>
                 ) : null}
-                {!isMobileLayout ? <div className="nordea-pagination-bar">
+                {!isMobileLayout ? <div className="ledger-pagination-bar">
                     <span>{filteredTransactions.length === 0 ? "0 poster" : `${firstVisible}-${lastVisible} af ${filteredTransactions.length}`}</span>
                     <div>
                         {!allTransactionsLoaded ? (
@@ -3338,7 +3340,7 @@ export default function LedgerDashboard({
                     </div>
                 </div> : null}
             </section>
-            {isMobileLayout ? <section className="nordea-mobile-review-list" aria-label="Poster">
+            {isMobileLayout ? <section className="ledger-mobile-review-list" aria-label="Poster">
                 {visibleMobileTransactions.map((row) => {
                     const expanded = expandedMobileRowId === row.rowId;
                     return (
@@ -3356,12 +3358,12 @@ export default function LedgerDashboard({
                         />
                     );
                 })}
-                {!loading && mobileTransactions.length === 0 ? <p className="nordea-mobile-empty">Ingen poster matcher filteret.</p> : null}
+                {!loading && mobileTransactions.length === 0 ? <p className="ledger-mobile-empty">Ingen poster matcher filteret.</p> : null}
                 {mobileRenderLimit < mobileTransactions.length ? (
-                    <div className="nordea-mobile-load-more-sentinel" ref={mobileLoadMoreRef}>
+                    <div className="ledger-mobile-load-more-sentinel" ref={mobileLoadMoreRef}>
                         <button
                             type="button"
-                            className="nordea-mobile-load-more"
+                            className="ledger-mobile-load-more"
                             onClick={() => setMobileRenderLimit((current) => Math.min(current + MOBILE_RENDER_INCREMENT, mobileTransactions.length))}
                         >
                             Vis flere
@@ -3371,7 +3373,7 @@ export default function LedgerDashboard({
                 {!allTransactionsLoaded ? (
                     <button
                         type="button"
-                        className="nordea-mobile-load-more"
+                        className="ledger-mobile-load-more"
                         onClick={() => void handleLoadMoreTransactions()}
                         disabled={loadingMore || loading || saving || retrieving || retrieveChecking}
                     >
@@ -3379,21 +3381,21 @@ export default function LedgerDashboard({
                     </button>
                 ) : null}
             </section> : null}
-            {!isMobileLayout ? <section className={`nordea-poster-content ${selectedIds.length > 0 ? "has-edit-panel" : ""}`}>
-                <div className="nordea-posting-table-container" ref={tableContainerRef}>
-                    <table className="nordea-table">
+            {!isMobileLayout ? <section className={`ledger-poster-content ${selectedIds.length > 0 ? "has-edit-panel" : ""}`}>
+                <div className="ledger-posting-table-container" ref={tableContainerRef}>
+                    <table className="ledger-table">
                         <colgroup>
-                            <col className="nordea-checkbox-column" />
-                            <col className="nordea-date-column" />
-                            <col className="nordea-description-column" />
-                            <col className="nordea-category-column" />
-                            <col className="nordea-icon-column" />
-                            <col className="nordea-icon-column" />
-                            <col className="nordea-amount-column" />
+                            <col className="ledger-checkbox-column" />
+                            <col className="ledger-date-column" />
+                            <col className="ledger-description-column" />
+                            <col className="ledger-category-column" />
+                            <col className="ledger-icon-column" />
+                            <col className="ledger-icon-column" />
+                            <col className="ledger-amount-column" />
                         </colgroup>
                         <thead>
                             <tr>
-                                <th className="nordea-checkbox-cell">
+                                <th className="ledger-checkbox-cell">
                                     <input
                                         type="checkbox"
                                         checked={allVisibleSelected}
@@ -3409,11 +3411,11 @@ export default function LedgerDashboard({
                                         }}
                                     />
                                 </th>
-                                <th className="nordea-date-cell"><SortHeader label="Dato" sortKey="booking_date" activeSortKey={sortKey} direction={sortDirection} onSort={handleSort} /></th>
+                                <th className="ledger-date-cell"><SortHeader label="Dato" sortKey="booking_date" activeSortKey={sortKey} direction={sortDirection} onSort={handleSort} /></th>
                                 <th><SortHeader label="Beskrivelse" sortKey="description" activeSortKey={sortKey} direction={sortDirection} onSort={handleSort} /></th>
                                 <th><SortHeader label="Kategori" sortKey="category" activeSortKey={sortKey} direction={sortDirection} onSort={handleSort} /></th>
-                                <th className="nordea-icon-cell" />
-                                <th className="nordea-icon-cell" />
+                                <th className="ledger-icon-cell" />
+                                <th className="ledger-icon-cell" />
                                 <th><SortHeader label="Beløb" sortKey="amount" activeSortKey={sortKey} direction={sortDirection} onSort={handleSort} /></th>
                             </tr>
                         </thead>
@@ -3435,17 +3437,17 @@ export default function LedgerDashboard({
                                             selectRow(row.rowId, { metaKey: event.metaKey, shiftKey: event.shiftKey });
                                         }}
                                     >
-                                        <td className="nordea-checkbox-cell" onClick={(event) => event.stopPropagation()}>
+                                        <td className="ledger-checkbox-cell" onClick={(event) => event.stopPropagation()}>
                                             <input type="checkbox" checked={selected} onChange={(event) => toggleSelected(row.rowId, event.target.checked, (event.nativeEvent as MouseEvent).shiftKey)} />
                                         </td>
-                                        <td className="nordea-date-cell">{formatTxDate(row.transaction.booking_date)}</td>
-                                        <td className="nordea-description-cell">
+                                        <td className="ledger-date-cell">{formatTxDate(row.transaction.booking_date)}</td>
+                                        <td className="ledger-description-cell">
                                             <span>{row.transaction.description}</span>
-                                            {note ? <span className="nordea-description-note"> ({note})</span> : null}
-                                            {isPendingReview(row.transaction) ? <span className="nordea-pending-pill">Pending</span> : null}
+                                            {note ? <span className="ledger-description-note"> ({note})</span> : null}
+                                            {isPendingReview(row.transaction) ? <span className="ledger-pending-pill">Pending</span> : null}
                                         </td>
-                                        <td className="nordea-category-cell" onClick={selected ? (event) => event.stopPropagation() : undefined}>
-                                            <div className="nordea-category-wrapper">
+                                        <td className="ledger-category-cell" onClick={selected ? (event) => event.stopPropagation() : undefined}>
+                                            <div className="ledger-category-wrapper">
                                                 {selected && selectedIds.length === 1 && availableCategories.length > 0 ? (
                                                     <CategorySelect
                                                         categories={availableCategories}
@@ -3459,13 +3461,13 @@ export default function LedgerDashboard({
                                                         bubbleClosedTableKeys
                                                     />
                                                 ) : (
-                                                    <span className="nordea-category-text">{isUncategorizedCategory(row.category) ? "" : categoryLabelForRow(row)}</span>
+                                                    <span className="ledger-category-text">{isUncategorizedCategory(row.category) ? "" : categoryLabelForRow(row)}</span>
                                                 )}
                                             </div>
                                         </td>
-                                        <td className="nordea-icon-cell">{row.isSplitChild ? <span>S</span> : null}</td>
-                                        <td className="nordea-icon-cell">{row.transaction.is_extraordinary ? <span>E</span> : null}</td>
-                                        <td className={row.amount < 0 ? "spiir-negative nordea-amount-cell" : row.amount > 0 ? "spiir-positive nordea-amount-cell" : "spiir-neutral nordea-amount-cell"}>
+                                        <td className="ledger-icon-cell">{row.isSplitChild ? <span>S</span> : null}</td>
+                                        <td className="ledger-icon-cell">{row.transaction.is_extraordinary ? <span>E</span> : null}</td>
+                                        <td className={row.amount < 0 ? "spiir-negative ledger-amount-cell" : row.amount > 0 ? "spiir-positive ledger-amount-cell" : "spiir-neutral ledger-amount-cell"}>
                                             {formatPostingAmount(row.amount)}
                                         </td>
                                     </tr>
@@ -3481,10 +3483,10 @@ export default function LedgerDashboard({
                 </div>
 
                 {selectedIds.length > 1 && availableCategories.length > 0 ? (
-                    <aside className="nordea-edit-panel" ref={editPanelRef} style={{ top: editPanelTop }}>
-                        <section className="nordea-bulk-summary">
+                    <aside className="ledger-edit-panel" ref={editPanelRef} style={{ top: editPanelTop }}>
+                        <section className="ledger-bulk-summary">
                             <p>
-                                <span className="nordea-bulk-amount">{formatSidebarAmount(selectedTotal)}</span>
+                                <span className="ledger-bulk-amount">{formatSidebarAmount(selectedTotal)}</span>
                                 <br />
                                 baseret på {selectedRows.length} poster
                             </p>
@@ -3496,11 +3498,11 @@ export default function LedgerDashboard({
                         </section>
                         <section>
                             <h5>Tags <small>– Opret nyt</small></h5>
-                            <div className="nordea-tag-check-list">
+                            <div className="ledger-tag-check-list">
                                 {taxonomy.hashtags.map((hashtag) => {
                                     const checked = selectedRows.length > 0 && selectedRows.every((row) => rowHasHashtag(row, hashtag.name));
                                     return (
-                                        <p className="nordea-tag-check" key={hashtag.name}>
+                                        <p className="ledger-tag-check" key={hashtag.name}>
                                             <label>
                                                 <input type="checkbox" checked={checked} disabled={editControlsDisabled} onChange={(event) => toggleBulkHashtag(hashtag.name, event.target.checked)} />
                                                 {hashtag.name}
@@ -3509,8 +3511,8 @@ export default function LedgerDashboard({
                                     );
                                 })}
                             </div>
-                            <div className="nordea-tag-create">
-                                <input list="nordea-hashtags" value={bulkHashtag} onChange={(event) => setBulkHashtag(event.target.value)} placeholder="Skriv hashtag" />
+                            <div className="ledger-tag-create">
+                                <input list="ledger-hashtags" value={bulkHashtag} onChange={(event) => setBulkHashtag(event.target.value)} placeholder="Skriv hashtag" />
                                 <button type="button" className="secondary-button" disabled={!bulkHashtag.trim() || editControlsDisabled} onClick={() => { void savePatch(selectedParentIds, { append_hashtags: [bulkHashtag.trim()] }); setBulkHashtag(""); }}>
                                     Tilføj
                                 </button>
@@ -3518,10 +3520,10 @@ export default function LedgerDashboard({
                         </section>
                     </aside>
                 ) : selectedTransaction && selectedRow ? (
-                    <aside className="nordea-edit-panel" ref={editPanelRef} style={{ top: editPanelTop }}>
+                    <aside className="ledger-edit-panel" ref={editPanelRef} style={{ top: editPanelTop }}>
                         <section>
                             <h5>Find lignende poster</h5>
-                            <ul className="nordea-similar-list">
+                            <ul className="ledger-similar-list">
                                 {similarWords(selectedTransaction).map((word) => (
                                     <li key={word}><button type="button" onClick={() => setSearchText(word)}>{word}</button></li>
                                 ))}
@@ -3529,7 +3531,7 @@ export default function LedgerDashboard({
                         </section>
                         <section>
                             <h5>Skift dato</h5>
-                            <div className="nordea-date-edit">
+                            <div className="ledger-date-edit">
                                 <input type="date" value={dateText} onChange={(event) => setDateText(event.target.value)} />
                                 <button type="button" disabled={editControlsDisabled || !dateText} onClick={() => void savePatch([selectedTransaction.id], { booking_date: dateText })}>Gem</button>
                             </div>
@@ -3543,7 +3545,7 @@ export default function LedgerDashboard({
                             <p>{selectedRow.isSplitChild || hasEffectiveSplit(selectedTransaction) ? "Denne post er en del af et split" : "Ønsker du at angive mere præcist, hvad pengene er blevet brugt til?"}</p>
                             <button type="button" onClick={() => openSplitModal(selectedTransaction)}>{selectedRow.isSplitChild || hasEffectiveSplit(selectedTransaction) ? "Rediger split" : "Split beløb"}</button>
                         </section>
-                        <label className="nordea-checkbox-label">
+                        <label className="ledger-checkbox-label">
                             <input type="checkbox" checked={isExtraordinary} onChange={(event) => { setIsExtraordinary(event.target.checked); void savePatch([selectedTransaction.id], { is_extraordinary: event.target.checked }); }} />
                             Ekstraordinær
                         </label>
@@ -3557,39 +3559,39 @@ export default function LedgerDashboard({
                                 Marker denne post som gennemgået
                             </button>
                         ) : null}
-                        <p className="nordea-origin-text">
+                        <p className="ledger-origin-text">
                             <span>Oprindelig dato: {formatTxDate(selectedTransaction.original_booking_date ?? selectedTransaction.booking_date)}</span>
                             <span>Oprindelig tekst: {selectedTransaction.remittance_information || selectedTransaction.description}</span>
                         </p>
                     </aside>
                 ) : null}
             </section> : null}
-            <datalist id="nordea-hashtags">
+            <datalist id="ledger-hashtags">
                 {taxonomy.hashtags.map((hashtag) => <option key={hashtag.name} value={hashtag.name} />)}
             </datalist>
             {splitModalOpen && selectedTransaction ? (
-                <div className="modal-backdrop nordea-split-backdrop" onClick={() => setSplitModalOpen(false)}>
-                    <section className="spiir-transactions-modal nordea-split-modal" onClick={(event) => event.stopPropagation()}>
-                        <div className="nordea-split-modal-header">
+                <div className="modal-backdrop ledger-split-backdrop" onClick={() => setSplitModalOpen(false)}>
+                    <section className="spiir-transactions-modal ledger-split-modal" onClick={(event) => event.stopPropagation()}>
+                        <div className="ledger-split-modal-header">
                             <div>
                                 <h2>Split beløbet</h2>
                                 <p>
                                     Split beløbet {formatPostingAmount(Math.abs(splitTotalAmount(selectedTransaction)))} for posten {selectedTransaction.description} fra {formatTxDate(selectedTransaction.booking_date)}.
                                 </p>
                             </div>
-                            <button type="button" className="nordea-split-close" onClick={() => setSplitModalOpen(false)} aria-label="Luk split">
+                            <button type="button" className="ledger-split-close" onClick={() => setSplitModalOpen(false)} aria-label="Luk split">
                                 ×
                             </button>
                         </div>
-                        <div className="nordea-split-lines">
+                        <div className="ledger-split-lines">
                             {splitLines.map((split, index) => (
-                                <div key={split.id} className={split.locked ? "nordea-split-line nordea-split-line-locked" : "nordea-split-line"}>
+                                <div key={split.id} className={split.locked ? "ledger-split-line ledger-split-line-locked" : "ledger-split-line"}>
                                     {split.locked ? (
-                                        <span className="nordea-split-remove-placeholder" aria-hidden="true" />
+                                        <span className="ledger-split-remove-placeholder" aria-hidden="true" />
                                     ) : (
                                         <button
                                             type="button"
-                                            className="nordea-split-remove"
+                                            className="ledger-split-remove"
                                             onClick={() => setSplitDraftLines((current) => current.filter((_, itemIndex) => itemIndex !== index))}
                                             aria-label="Fjern splitlinje"
                                         >
@@ -3598,31 +3600,33 @@ export default function LedgerDashboard({
                                     )}
                                     <CategorySelect categories={availableCategories} value={categoryKey(split.category)} onChange={(category) => setSplitDraftLines((current) => current.map((item) => item.id === split.id ? { ...item, category } : item))} placeholder="Vælg kategori" />
                                     <input value={split.note} onChange={(event) => setSplitDraftLines((current) => current.map((item) => item.id === split.id ? { ...item, note: event.target.value } : item))} placeholder="Skriv note" />
-                                    <input className="nordea-split-amount" type="text" inputMode="text" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={split.amountText} disabled={split.locked} onChange={(event) => setSplitDraftLines((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, amount: parseSplitDraftAmount(event.target.value), amountText: event.target.value } : item))} onBlur={() => setSplitDraftLines((current) => current.map((item, itemIndex) => itemIndex === index && Number.isFinite(item.amount) ? { ...item, amountText: formatSplitDraftAmount(item.amount) } : item))} />
+                                    <input className="ledger-split-amount" type="text" inputMode="text" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={split.amountText} disabled={split.locked} onChange={(event) => setSplitDraftLines((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, amount: parseSplitDraftAmount(event.target.value), amountText: event.target.value } : item))} onBlur={() => setSplitDraftLines((current) => current.map((item, itemIndex) => itemIndex === index && Number.isFinite(item.amount) ? { ...item, amountText: formatSplitDraftAmount(item.amount) } : item))} />
                                 </div>
                             ))}
                         </div>
-                        {splitError ? <p className="nordea-split-error">{splitError}</p> : null}
-                        <div className="nordea-split-actions">
-                            <button type="button" className="nordea-split-add" onClick={() => setSplitDraftLines((current) => [...current, blankSplitLine()])}>Ny linje</button>
-                            <button type="button" className="nordea-split-save" disabled={splitSaveDisabled} onClick={() => { void saveSplitLines(); }}>Gem split</button>
+                        {splitError ? <p className="ledger-split-error">{splitError}</p> : null}
+                        <div className="ledger-split-actions">
+                            <button type="button" className="ledger-split-add" onClick={() => setSplitDraftLines((current) => [...current, blankSplitLine()])}>Ny linje</button>
+                            <button type="button" className="ledger-split-save" disabled={splitSaveDisabled} onClick={() => { void saveSplitLines(); }}>Gem split</button>
                         </div>
                     </section>
                 </div>
             ) : null}
             {sunburstState ? (
-                <SpiirSunburstModal
-                    state={sunburstState}
-                    transactions={spiirTransactions}
-                    closeOnEscape={!sunburstDrilldownModal}
-                    ensureTransactionsLoaded={ensureSpiirTransactionsLoaded}
-                    onOpenTransactions={openSunburstDrilldown}
-                    onClose={() => setSunburstState(null)}
-                />
+                <Suspense fallback={null}>
+                    <SpiirSunburstModal
+                        state={sunburstState}
+                        transactions={spiirTransactions}
+                        closeOnEscape={!sunburstDrilldownModal}
+                        ensureTransactionsLoaded={ensureSpiirTransactionsLoaded}
+                        onOpenTransactions={openSunburstDrilldown}
+                        onClose={() => setSunburstState(null)}
+                    />
+                </Suspense>
             ) : null}
             {sunburstDrilldownModal ? (
                 <div className="modal-backdrop" onClick={() => setSunburstDrilldownModal(null)}>
-                    <section className="nordea-drilldown-modal" onClick={(event) => event.stopPropagation()}>
+                    <section className="ledger-drilldown-modal" onClick={(event) => event.stopPropagation()}>
                         <LedgerDashboard
                             key={`${sunburstDrilldownModal.title}|${sunburstDrilldownModal.periodFilter ?? "all"}|${sunburstDrilldownModal.categoryFilter?.categoryId ?? ""}|${sunburstDrilldownModal.searchText ?? ""}`}
                             active
