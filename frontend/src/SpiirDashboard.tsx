@@ -1491,25 +1491,6 @@ function BusinessReview({
                     />
                 </section>
 
-                <section className="panel business-chart-panel business-chart-clickable">
-                    <div className="business-chart-heading"><div><h2>Expense mix <strong className="business-chart-basis">{summaryMode === "average" ? "Avg/month" : "Total"}</strong></h2><span>{summaryMode === "average" ? "Average spend per compared month" : "Largest categories year to date"} · click to drill down</span></div><button type="button" className="business-chart-drill-button" onClick={() => expenseRow && onOpenDrilldown(expenseRow, `Expense mix · ${selectedYear} YTD`, reportingCurrentPeriods)}>View all expenses</button></div>
-                    <Plot
-                        data={[
-                            { type: "bar", orientation: "h", name: selectedYear, y: categoryRows.map((item) => item.row.label).reverse(), x: categoryRows.map((item) => summaryValue(item.current)).reverse(), marker: { color: "#09ab58" }, customdata: categoryRows.map((item) => item.row.key).reverse(), hovertemplate: `%{x:,.0f} kr${summaryMode === "average" ? " / month" : ""}<extra></extra>` },
-                            { type: "bar", orientation: "h", name: compareYear, y: categoryRows.map((item) => item.row.label).reverse(), x: categoryRows.map((item) => summaryValue(item.previous, true)).reverse(), marker: { color: "#b8c7bf" }, customdata: categoryRows.map((item) => item.row.key).reverse(), hovertemplate: `%{x:,.0f} kr${summaryMode === "average" ? " / month" : ""}<extra></extra>` },
-                        ] as never[]}
-                        layout={{ ...sharedLayout, datarevision: summaryMode, barmode: "group", bargap: 0.22, height: 360, margin: { l: 145, r: 24, t: 32, b: 48 }, xaxis: { ...modernYAxis, title: summaryMode === "average" ? "DKK / month" : "DKK" }, yaxis: { showgrid: false, fixedrange: true } } as never}
-                        config={{ displayModeBar: false, responsive: true }} useResizeHandler className="business-plot"
-                        onClick={(event) => {
-                            const key = String(event.points[0]?.customdata ?? "");
-                            const row = section.rows.find((candidate) => candidate.key === key);
-                            const isPrior = String(event.points[0]?.data?.name ?? "") === compareYear;
-                            const periods = isPrior ? reportingPreviousPeriods : reportingCurrentPeriods;
-                            const year = isPrior ? compareYear : selectedYear;
-                            if (row) onOpenDrilldown(row, `${row.label} · ${year} YTD`, periods);
-                        }}
-                    />
-                </section>
             </div>
 
             <section className={`panel spending-source-panel${spendingTreemapFullscreen ? " fullscreen" : ""}`}>
