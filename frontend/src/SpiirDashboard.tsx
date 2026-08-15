@@ -731,6 +731,7 @@ type OverviewSectionProps = {
     projection: { year: string; periods: string[]; monthlyRows: SpiirOverviewRow[] } | null;
     onOpenDrilldown: (row: SpiirOverviewRow, title: string, periods: string[], kind: PeriodKind) => void;
     onOpenSunburst: (title: string, periods: string[], mode: SunburstMode, rows: SpiirOverviewRow[]) => void;
+    incompletePeriods?: Set<string>;
 };
 
 function OverviewSection({
@@ -746,6 +747,7 @@ function OverviewSection({
     heatmap,
     showPrevTotals,
     projection,
+    incompletePeriods,
     onOpenDrilldown,
     onOpenSunburst
 }: OverviewSectionProps) {
@@ -761,6 +763,17 @@ function OverviewSection({
     );
     const allExpanded = expandableKeys.length > 0 && expandableKeys.every((key) => expandedRows.has(key));
     const showProjection = periodKind === "year" && projection !== null;
+    
+    const completedPeriods = useMemo(() => {
+        if (!incompletePeriods) return visiblePeriods;
+        return visiblePeriods.filter(period => !incompletePeriods.has(period));
+    }, [visiblePeriods, incompletePeriods]);
+
+    const hasIncompleteVisible = incompletePeriods && visiblePeriods.some(p => incompletePeriods.has(p));
+    
+    const snitTooltip = periodKind === "year" 
+        ? `Average of ${completedPeriods.length > 0 ? completedPeriods.join(", ") : "none"}${incompletePeriods && visiblePeriods.length > completedPeriods.length ? ` (excluding incomplete: ${visiblePeriods.filter(p => incompletePeriods.has(p)).join(", ")})` : ""}`
+        : "Average";
 
     return (
         <section className="panel spiir-panel">
@@ -784,11 +797,11 @@ function OverviewSection({
                                         className="spiir-th-button"
                                         onClick={() => onOpenSunburst(`${title} · ${period}`, [period], periodKind === "year" ? "years" : "months", section.rows)}
                                     >
-                                        {period}
+                                        {period}{incompletePeriods?.has(period) ? "*" : ""}
                                     </button>
                                 </th>
                             ))}
-                            {showProjection ? <th>Proj. {projection.year}</th> : null}
+                            {showProjection ? <th>{projection.year}-12</th> : null}
                             <th>
                                 <button
                                     type="button"
@@ -798,7 +811,7 @@ function OverviewSection({
                                     I alt
                                 </button>
                             </th>
-                            <th>Snit</th>
+                            <th title={snitTooltip} className={periodKind === "year" ? "spiir-help-cursor" : ""}>Snit</th>
                             {showPrevTotals ? <th>Prev total</th> : null}
                             {showPrevTotals ? <th>Δ total</th> : null}
                         </tr>
@@ -807,7 +820,7 @@ function OverviewSection({
                         {visibleRows.map((row) => {
                             const expandable = hasChildren(orderedRows, row.key);
                             const total = rowTotalForPeriods(row, visiblePeriods);
-                            const avg = rowAvgForPeriods(row, visiblePeriods);
+                            const avg = rowAvgForPeriods(row, completedPeriods);
                             const prevTotal = rowTotalForPeriods(row, prevPeriods);
                             const delta = total - prevTotal;
                             const projected = showProjection && projection
@@ -900,6 +913,11 @@ function OverviewSection({
                     </tbody>
                 </table>
             </div>
+            {hasIncompleteVisible ? (
+                <div className="spiir-table-footnote">
+                    * incomplete
+                </div>
+            ) : null}
         </section>
     );
 }
@@ -1194,7 +1212,7 @@ function BusinessReview({
     const previousNetByMonth = previousIncomeByMonth.map((income, index) => income - previousExpenseByMonth[index] - previousInvestmentByMonth[index]);
 
     const incomeCategoryRows = section.rows
-        .filter((row) => row.kind === "main" && row.parent === "income")
+        .filter((row) => row.kind === "sub" && row.parent === "income")
         .map((row) => ({
             row,
             current: comparableTransactionTotal(transactions, row, reportingCurrentPeriods, null) ?? rowTotalForPeriods(row, reportingCurrentPeriods),
@@ -1242,11 +1260,29 @@ function BusinessReview({
         { label: "Investment & pension", value: -currentInvestment, key: "investment", row: investmentRow },
         { label: "Cash after investing", value: 0, key: "cashflow", row: cashFlowRow },
     ];
-    const waterfallText = waterfallSteps
-        .map((step) => step.value === 0 && (step.key === "diff" || step.key === "cashflow")
+    const waterfallDisplayedValues = waterfallSteps.map((step) => {
+        const value = step.value === 0 && (step.key === "diff" || step.key === "cashflow")
             ? step.key === "diff" ? currentOperatingSurplus : currentNet
-            : step.value)
-        .map((value) => formatWholeNumber(value));
+            : step.value;
+        return summaryMode === "average" ? value / currentMonthDivisor : value;
+    });
+    const waterfallText = waterfallDisplayedValues.map((value) => formatWholeNumber(value));
+    const waterfallValues = waterfallDisplayedValues.map((value) => value);
+    const incomeStepCount = incomeCategoryRows.length || 1;
+    const waterfallXLabels = waterfallSteps.map((step, index) => index < incomeStepCount ? "Income" : step.label);
+    const waterfallHoverLabels = waterfallSteps.map((step) => step.label);
+    const waterfallBases: number[] = [];
+    const waterfallHeights: number[] = [];
+    let waterfallRunning = 0;
+    waterfallSteps.forEach((step, index) => {
+        const isTotal = step.key === "diff" || step.key === "cashflow";
+        const start = isTotal ? 0 : waterfallRunning;
+        const end = isTotal ? waterfallValues[index] : waterfallRunning + waterfallValues[index];
+        waterfallBases.push(Math.min(start, end));
+        waterfallHeights.push(Math.abs(end - start));
+        waterfallRunning = end;
+    });
+    const incomeDisplayIndexes = Array.from({ length: incomeStepCount }, (_, index) => index);
     const spendingSources = useMemo(
         () => buildSpendingSources(transactions, reportingCurrentPeriods, reportingPreviousPeriods, spendingCategory, spendingSubcategory),
         [reportingCurrentPeriods.join("|"), reportingPreviousPeriods.join("|"), spendingCategory, spendingSubcategory, transactions],
@@ -1271,8 +1307,48 @@ function BusinessReview({
     }, new Map<string, SpendingSubcategory>()).values()];
     const spendingTreemapTotal = spendingTreemapSubcategories.reduce((sum, item) => sum + item.spend, 0);
     spendingTreemapSubcategories.forEach((item) => { item.share = spendingTreemapTotal ? (item.spend / spendingTreemapTotal) * 100 : 0; });
-    const spendingPalette = ["#1687a7", "#09ab58", "#e09c38", "#9b70c9", "#e45b55", "#3c8a75", "#c97955", "#6f7fc4"];
-    const spendingCategoryColor = new Map(spendingTreemapCategories.map((category, index) => [category, spendingPalette[index % spendingPalette.length]]));
+    const spendingPalette = ["#1687a7", "#e09c38", "#9b70c9", "#e45b55", "#6f7fc4", "#b45f9e", "#cf7b3a", "#7a6f9b"];
+    const spendingCategoryColor = new Map(spendingCategories.map((category, index) => [category, spendingPalette[index % spendingPalette.length]]));
+    const incomePalette = ["#09ab58", "#42bf7d", "#79d39f", "#a8e6bd"];
+    const waterfallColors = waterfallSteps.map((step) => {
+        const incomeIndex = incomeCategoryRows.findIndex((item) => item.row.key === step.key);
+        if (incomeIndex >= 0 || step.key === "income") {
+            return incomePalette[Math.max(incomeIndex, 0) % incomePalette.length];
+        }
+        if (step.key === "investment") {
+            return "#ec6f9d";
+        }
+        const categoryColor = spendingCategoryColor.get(step.label);
+        if (categoryColor) {
+            return categoryColor;
+        }
+        if (step.key === "diff") {
+            return currentOperatingSurplus >= 0 ? "#09ab58" : "#e45b55";
+        }
+        if (step.key === "cashflow") {
+            return currentNet >= 0 ? "#09ab58" : "#e45b55";
+        }
+        return step.value >= 0 ? "#09ab58" : "#e45b55";
+    });
+    const selectSpendingTreemapPoint = (pointLabel: string, pointNumber?: number): void => {
+        const category = spendingTreemapCategories.find((item) => item === pointLabel)
+            ?? (pointNumber !== undefined && Number.isFinite(pointNumber) && pointNumber > 0 && pointNumber <= spendingTreemapCategories.length ? spendingTreemapCategories[pointNumber - 1] : undefined);
+        if (category) {
+            setSpendingTreemapFullscreen(false);
+            setSpendingCategory(category);
+            setSpendingSubcategory("");
+            setShowAllSpendingSources(false);
+            return;
+        }
+        const subcategory = spendingTreemapSubcategories.find((item) => item.label === pointLabel)
+            ?? (pointNumber !== undefined && Number.isFinite(pointNumber) && pointNumber > spendingTreemapCategories.length ? spendingTreemapSubcategories[pointNumber - spendingTreemapCategories.length - 1] : undefined);
+        if (subcategory) {
+            setSpendingTreemapFullscreen(false);
+            setSpendingCategory(subcategory.category);
+            setSpendingSubcategory(subcategory.label);
+            setShowAllSpendingSources(false);
+        }
+    };
 
     if (!selectedYear || reportingCurrentPeriods.length === 0) {
         return <section className="panel business-review"><p>No comparable yearly data is available yet.</p></section>;
@@ -1375,23 +1451,37 @@ function BusinessReview({
                 <section className="panel business-chart-panel business-chart-wide business-chart-clickable">
                     <div className="business-chart-heading"><div><h2>Cash-flow waterfall</h2><span>From income through each expense category to cash after investing · click any step to inspect</span></div><button type="button" className="business-chart-drill-button" onClick={() => cashFlowRow && onOpenDrilldown(cashFlowRow, `Cash-flow waterfall · ${selectedYear} YTD`, reportingCurrentPeriods)}>View cash flow</button></div>
                     <Plot
-                        data={[{
-                            type: "waterfall",
-                            name: selectedYear,
-                            x: waterfallSteps.map((step) => step.label),
-                            y: waterfallSteps.map((step) => step.value),
-                            measure: waterfallSteps.map((step) => step.key === "diff" || step.key === "cashflow" ? "total" : step.key === "income" ? "absolute" : "relative"),
-                            customdata: waterfallSteps.map((step) => step.key),
-                            text: waterfallText,
-                            increasing: { marker: { color: "#09ab58" } },
-                            decreasing: { marker: { color: "#e45b55" } },
-                            totals: { marker: { color: currentNet >= 0 ? "#09ab58" : "#e45b55" } },
-                            connector: { line: { color: "#718078", width: 1 } },
-                            textposition: "outside",
-                            texttemplate: "%{text}",
-                            hovertemplate: "%{x} · %{text} kr<extra></extra>",
-                        }] as never[]}
-                        layout={{ ...sharedLayout, showlegend: false, height: 390, margin: { l: 68, r: 24, t: 30, b: 72 }, xaxis: modernXAxis, yaxis: modernYAxis } as never}
+                        data={[
+                            ...incomeDisplayIndexes.map((index) => ({
+                                type: "bar" as const,
+                                name: "Income",
+                                showlegend: false,
+                                x: ["Income"],
+                                y: [waterfallHeights[index]],
+                                customdata: [waterfallSteps[index].key],
+                                text: [waterfallText[index]],
+                                hovertext: [waterfallHoverLabels[index]],
+                                marker: { color: waterfallColors[index] },
+                                textposition: "none",
+                                hovertemplate: "%{hovertext} · %{y:,.0f} kr<extra></extra>",
+                            })),
+                            {
+                                type: "bar" as const,
+                                name: "Waterfall",
+                                showlegend: false,
+                                x: waterfallXLabels.slice(incomeStepCount),
+                                y: waterfallHeights.slice(incomeStepCount),
+                                base: waterfallBases.slice(incomeStepCount),
+                                customdata: waterfallSteps.slice(incomeStepCount).map((step) => step.key),
+                                text: waterfallText.slice(incomeStepCount),
+                                hovertext: waterfallHoverLabels.slice(incomeStepCount),
+                                marker: { color: waterfallColors.slice(incomeStepCount) },
+                                textposition: "outside",
+                                texttemplate: "%{text}",
+                                hovertemplate: "%{hovertext} · %{text} kr<extra></extra>",
+                            },
+                        ] as never[]}
+                        layout={{ ...sharedLayout, showlegend: false, hovermode: "closest", barmode: "stack", height: 390, margin: { l: 68, r: 24, t: 30, b: 72 }, xaxis: { ...modernXAxis, categoryorder: "array", categoryarray: [...new Set(waterfallXLabels)] }, yaxis: modernYAxis } as never}
                         config={{ displayModeBar: false, responsive: true }} useResizeHandler className="business-plot business-waterfall"
                         onClick={(event) => {
                             const key = String(event.points[0]?.customdata ?? "");
@@ -1447,41 +1537,61 @@ function BusinessReview({
                         </button>
                     </div>
                 </div>
-                {spendingSubcategory ? (
+                {spendingSubcategory || spendingCategory ? (
                     <div className="spending-source-context">
-                        <span>Showing sources in <strong>{spendingSubcategory}</strong>{spendingCategory ? ` · ${spendingCategory}` : ""}</span>
-                        <button type="button" onClick={() => setSpendingSubcategory("")}>Clear subcategory</button>
+                        <span>Showing sources in <strong>{spendingSubcategory || spendingCategory}</strong>{spendingSubcategory && spendingCategory ? ` · ${spendingCategory}` : ""}</span>
+                        <div style={{ display: "flex", gap: "8px" }}>
+                            {spendingSubcategory ? <button type="button" onClick={() => setSpendingSubcategory("")}>Clear Subcategory</button> : null}
+                            {spendingCategory ? <button type="button" onClick={() => { setSpendingCategory(""); setSpendingSubcategory(""); }}>Clear Category</button> : null}
+                        </div>
                     </div>
                 ) : null}
                 {spendingSourceRows.length > 0 ? (
                     <div className="spending-source-layout">
-                        <Plot
-                            key={`spending-treemap-${spendingTreemapFullscreen ? "fullscreen" : "inline"}-${spendingCategory}`}
-                            data={[{
+                        <div
+                            className="spending-source-treemap-click-surface"
+                            onPointerDownCapture={(event) => {
+                                const slice = (event.target as Element).closest(".slice");
+                                const label = slice?.querySelector<SVGTextElement>("[data-unformatted]")?.getAttribute("data-unformatted")?.trim() ?? "";
+                                if (!label) {
+                                    return;
+                                }
+                                selectSpendingTreemapPoint(label);
+                            }}
+                        >
+                            <Plot
+                                key={`spending-treemap-${spendingTreemapFullscreen ? "fullscreen" : "inline"}-${spendingCategory}-${spendingSources.length}`}
+                                data={[{
                                 type: "treemap",
                                 ids: [
+                                    ...(spendingCategory ? [] : ["spending-root"]),
                                     ...spendingTreemapCategories.map((category) => `category:${category}`),
                                     ...spendingTreemapSubcategories.map((item) => `subcategory:${item.key}`),
                                 ],
                                 labels: [
+                                    ...(spendingCategory ? [] : ["All spending"]),
                                     ...spendingTreemapCategories,
                                     ...spendingTreemapSubcategories.map((item) => item.label),
                                 ],
                                 parents: [
-                                    ...spendingTreemapCategories.map(() => ""),
+                                    ...(spendingCategory ? [] : [""]),
+                                    ...spendingTreemapCategories.map(() => spendingCategory ? "" : "spending-root"),
                                     ...spendingTreemapSubcategories.map((item) => `category:${item.category}`),
                                 ],
                                 values: [
+                                    ...(spendingCategory ? [] : [spendingTreemapValue(spendingTreemapTotal)]),
                                     ...spendingTreemapCategories.map((category) => spendingTreemapValue(spendingTreemapCategoryTotals.get(category) ?? 0)),
                                     ...spendingTreemapSubcategories.map((item) => spendingTreemapValue(item.spend)),
                                 ],
                                 customdata: [
+                                    ...(spendingCategory ? [] : [""]),
                                     ...spendingTreemapCategories.map(() => ""),
                                     ...spendingTreemapSubcategories.map((item) => item.label),
                                 ],
                                 branchvalues: "total",
                                 marker: {
                                     colors: [
+                                        ...(spendingCategory ? [] : ["#607069"]),
                                         ...spendingTreemapCategories.map((category) => spendingCategoryColor.get(category)),
                                         ...spendingTreemapSubcategories.map((item) => spendingCategoryColor.get(item.category)),
                                     ],
@@ -1489,36 +1599,47 @@ function BusinessReview({
                                 },
                                 textinfo: "none",
                                 texttemplate: [
+                                    ...(spendingCategory ? [] : [""]),
                                     ...spendingTreemapCategories.map(() => "<b>%{label}</b><br>%{percentRoot:.0%}"),
                                     ...spendingTreemapSubcategories.map((item) => item.share >= (spendingTreemapFullscreen ? 0.12 : 0.6) ? "<b>%{label}</b><br>%{percentRoot:.1%}" : ""),
                                 ],
                                 textfont: { color: "#f7fffa", size: spendingTreemapFullscreen ? 11 : 11 },
                                 hovertemplate: `<b>%{label}</b><br>%{value:,.0f}${spendingTreemapUnit} · %{percentRoot:.1%} of spending<extra></extra>`,
                                 pathbar: { visible: false },
-                            }] as never[]}
-                            layout={{ ...sharedLayout, datarevision: summaryMode, margin: { l: 4, r: 4, t: 8, b: 4 }, height: spendingTreemapFullscreen ? Math.max(600, window.innerHeight - 165) : 430, showlegend: false, uniformtext: { minsize: 8, mode: "hide" } } as never}
-                            config={{ displayModeBar: false, responsive: true }}
-                            useResizeHandler
-                            className="business-plot spending-source-treemap"
-                            onClick={(event) => {
-                                const point = event.points[0] as unknown as { id?: unknown; customdata?: unknown; label?: unknown } | undefined;
-                                const id = String(point?.id ?? "");
-                                if (id.startsWith("category:")) {
-                                    setSpendingTreemapFullscreen(false);
-                                    setSpendingCategory(id.slice("category:".length));
-                                    setSpendingSubcategory("");
-                                    setShowAllSpendingSources(false);
-                                    return;
-                                }
-                                setSpendingTreemapFullscreen(false);
-                                if (id.startsWith("subcategory:")) {
-                                    const [category, subcategory] = id.slice("subcategory:".length).split("|");
-                                    setSpendingCategory(category);
-                                    setSpendingSubcategory(subcategory);
-                                    setShowAllSpendingSources(false);
-                                }
-                            }}
-                        />
+                                }] as never[]}
+                                layout={{ ...sharedLayout, clickmode: "event", datarevision: summaryMode, margin: { l: 4, r: 4, t: 8, b: 4 }, height: spendingTreemapFullscreen ? Math.max(600, window.innerHeight - 165) : undefined, showlegend: false, uniformtext: { minsize: 8, mode: "hide" } } as never}
+                                style={spendingTreemapFullscreen ? undefined : { height: "100%", minHeight: "600px" }}
+                                config={{ displayModeBar: false, responsive: true }}
+                                useResizeHandler
+                                className="business-plot spending-source-treemap"
+                                onInitialized={(_figure, graphDiv) => {
+                                    const plot = graphDiv as unknown as { on?: (event: string, handler: (event: { points?: Array<{ label?: unknown; pointNumber?: unknown }> }) => void) => void; removeAllListeners?: (event: string) => void };
+                                    plot.removeAllListeners?.("plotly_click");
+                                    plot.on?.("plotly_click", (event) => {
+                                        const point = event.points?.[0];
+                                        const pointNumber = Array.isArray(point?.pointNumber) ? Number(point.pointNumber[point.pointNumber.length - 1]) : Number(point?.pointNumber);
+                                        selectSpendingTreemapPoint(String(point?.label ?? ""), pointNumber);
+                                    });
+                                }}
+                                onUpdate={(_figure, graphDiv) => {
+                                    const plot = graphDiv as unknown as { on?: (event: string, handler: (event: { points?: Array<{ label?: unknown; pointNumber?: unknown }> }) => void) => void; removeAllListeners?: (event: string) => void };
+                                    plot.removeAllListeners?.("plotly_click");
+                                    plot.on?.("plotly_click", (event) => {
+                                        const point = event.points?.[0];
+                                        const pointNumber = Array.isArray(point?.pointNumber) ? Number(point.pointNumber[point.pointNumber.length - 1]) : Number(point?.pointNumber);
+                                        selectSpendingTreemapPoint(String(point?.label ?? ""), pointNumber);
+                                    });
+                                }}
+                                onClick={(event) => {
+                                    const point = event.points[0] as unknown as { id?: unknown; label?: unknown; pointNumber?: unknown } | undefined;
+                                    const pointLabel = String(point?.label ?? "");
+                                    const pointNumber = Array.isArray(point?.pointNumber)
+                                        ? Number(point.pointNumber[point.pointNumber.length - 1])
+                                        : Number(point?.pointNumber);
+                                    selectSpendingTreemapPoint(pointLabel, pointNumber);
+                                }}
+                            />
+                        </div>
                         <div className={`spending-source-list${showAllSpendingSources ? " expanded" : ""}`} role="list" aria-label="Top spending sources">
                             <div className="spending-source-list-head">
                                 <span>Source</span><span>{summaryMode === "average" ? "Avg/month" : "Spend"}</span>
@@ -1589,8 +1710,10 @@ function BusinessReview({
                                     ...spendingTreemapCategories.map((category) => spendingCategoryColor.get(category)),
                                     ...spendingTreemapSubcategories.map((item) => spendingCategoryColor.get(item.category)),
                                 ],
+                                opacity: 1,
                                 line: { color: "rgba(255,255,255,.4)", width: 1 },
                             },
+                            opacity: 1,
                             textinfo: "label+percent root",
                             insidetextorientation: "radial",
                             hovertemplate: "<b>%{label}</b><br>%{value:,.0f} kr · %{percentRoot:.1%} of spending<extra></extra>",
@@ -1877,6 +2000,18 @@ export default function SpiirDashboard({ active }: { active: boolean }) {
         // Use all available months in that year for the projection basis
         return yearMonths.length > 0 ? { year, periods: yearMonths, monthlyRows: monthly.rows } : null;
     }, [monthly, yearly]);
+    
+    const incompleteYearPeriods = useMemo(() => {
+        if (!monthly || !yearly) return new Set<string>();
+        const incomplete = new Set<string>();
+        for (const year of yearly.periods) {
+            const yearMonths = monthly.periods.filter((period) => period.startsWith(`${year}-`));
+            if (yearMonths.length > 0 && yearMonths.length < 12) {
+                incomplete.add(year);
+            }
+        }
+        return incomplete;
+    }, [monthly, yearly]);
     const monthlyChartFigure = useMemo(
         () => monthly && monthlyVisiblePeriods.length > 0 ? buildPeriodChartFigure(monthly, monthlyVisiblePeriods, "month", { ...monthlyChart, bars: true, cumulative: false, stacked: false, level: "top" }, hiddenMonthlySeries) : null,
         [hiddenMonthlySeries, monthly, monthlyChart, monthlyVisiblePeriods]
@@ -2051,6 +2186,7 @@ export default function SpiirDashboard({ active }: { active: boolean }) {
                     heatmap={heatmap}
                     showPrevTotals={showPrevTotals}
                     projection={yearlyProjection}
+                    incompletePeriods={incompleteYearPeriods}
                     onExpandAll={() => setExpandedYearlyRows(new Set(yearly.rows.map((row) => row.key)))}
                     onCollapseAll={() => setExpandedYearlyRows(new Set())}
                     onOpenDrilldown={(row, title, periods, kind) => void handleOpenDrilldown(row, title, periods, kind)}

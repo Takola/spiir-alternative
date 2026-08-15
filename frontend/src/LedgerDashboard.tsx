@@ -14,6 +14,7 @@ type PeriodFilter = "all" | "custom" | `year:${string}` | `month:${string}`;
 type VisibilityFilter = "all" | "income" | "expense" | "investment" | "operating" | "cashflow" | "bills" | "consumption" | "category" | "uncategorized" | "extraordinary";
 type SortKey = "booking_date" | "description" | "category" | "amount";
 type SortDirection = "asc" | "desc";
+type AmountSizeFilter = "all" | "under100" | "100to1000" | "1000to10000" | "over10000" | "custom";
 
 export type LedgerDrilldownFilter = {
     title: string;
@@ -550,6 +551,9 @@ function rowMatchesFilters(
         categoryFilter: LedgerCategoryOption | null;
         searchText: string;
         showTransfersAlways: boolean;
+        amountSize?: AmountSizeFilter;
+        amountMin?: number | null;
+        amountMax?: number | null;
         outflowsOnly?: boolean;
     }
 ): boolean {
@@ -565,6 +569,27 @@ function rowMatchesFilters(
     }
     if (filters.outflowsOnly) {
         if (row.amount >= 0 || isInternalTransfer(row)) {
+            return false;
+        }
+    }
+    const absoluteAmount = Math.abs(row.amount);
+    if (filters.amountSize === "under100" && absoluteAmount >= 100) {
+        return false;
+    }
+    if (filters.amountSize === "100to1000" && (absoluteAmount < 100 || absoluteAmount >= 1000)) {
+        return false;
+    }
+    if (filters.amountSize === "1000to10000" && (absoluteAmount < 1000 || absoluteAmount >= 10000)) {
+        return false;
+    }
+    if (filters.amountSize === "over10000" && absoluteAmount < 10000) {
+        return false;
+    }
+    if (filters.amountSize === "custom") {
+        if (filters.amountMin !== null && filters.amountMin !== undefined && Number.isFinite(filters.amountMin) && absoluteAmount < filters.amountMin) {
+            return false;
+        }
+        if (filters.amountMax !== null && filters.amountMax !== undefined && Number.isFinite(filters.amountMax) && absoluteAmount > filters.amountMax) {
             return false;
         }
     }
@@ -1870,6 +1895,9 @@ export default function LedgerDashboard({
     const [showTransfersAlways, setShowTransfersAlways] = useState(true);
     const [visibilityPanelOpen, setVisibilityPanelOpen] = useState(false);
     const [searchText, setSearchText] = useState(initialFilter?.searchText ?? "");
+    const [amountSizeFilter, setAmountSizeFilter] = useState<AmountSizeFilter>("all");
+    const [amountMinText, setAmountMinText] = useState("");
+    const [amountMaxText, setAmountMaxText] = useState("");
     const [searchResetKey, setSearchResetKey] = useState(0);
     const [sortKey, setSortKey] = useState<SortKey>("booking_date");
     const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
@@ -2380,13 +2408,15 @@ export default function LedgerDashboard({
             });
     }, [availableCategories]);
     const filteredTransactions = useMemo(() => {
-        const activeFilters = { periodFilter, periodStart: customPeriodStart, periodEnd: customPeriodEnd, visibilityFilter, categoryFilter, searchText, showTransfersAlways, outflowsOnly: initialFilter?.outflowsOnly };
+        const amountMin = amountMinText.trim() === "" ? null : Number(amountMinText);
+        const amountMax = amountMaxText.trim() === "" ? null : Number(amountMaxText);
+        const activeFilters = { periodFilter, periodStart: customPeriodStart, periodEnd: customPeriodEnd, visibilityFilter, categoryFilter, searchText, showTransfersAlways, amountSize: amountSizeFilter, amountMin, amountMax, outflowsOnly: initialFilter?.outflowsOnly };
         if (embedded && pinnedDrilldownRowIds) {
             const needle = searchText.trim().toLowerCase();
-            return displayTransactions.filter((row) => pinnedDrilldownRowIds.has(row.rowId) && (!needle || transactionTextForRow(row).toLowerCase().includes(needle)));
+            return displayTransactions.filter((row) => pinnedDrilldownRowIds.has(row.rowId) && rowMatchesFilters(row, { ...activeFilters, visibilityFilter: "all", categoryFilter: null }) && (!needle || transactionTextForRow(row).toLowerCase().includes(needle)));
         }
         return displayTransactions.filter((row) => rowMatchesFilters(row, activeFilters));
-    }, [categoryFilter, customPeriodEnd, customPeriodStart, displayTransactions, embedded, periodFilter, pinnedDrilldownRowIds, searchText, showTransfersAlways, visibilityFilter]);
+    }, [amountMaxText, amountMinText, amountSizeFilter, categoryFilter, customPeriodEnd, customPeriodStart, displayTransactions, embedded, periodFilter, pinnedDrilldownRowIds, searchText, showTransfersAlways, visibilityFilter]);
     const pageCount = Math.max(1, Math.ceil(filteredTransactions.length / PAGE_SIZE));
     const sortedTransactions = useMemo(() => {
         return [...filteredTransactions].sort((left, right) => {
@@ -2418,11 +2448,11 @@ export default function LedgerDashboard({
     }, [filteredTransactions, visibilityFilter]);
     useEffect(() => {
         setPage(1);
-    }, [periodFilter, searchText, visibilityFilter, categoryFilter, selectedAccountIbans]);
+    }, [amountMaxText, amountMinText, amountSizeFilter, periodFilter, searchText, visibilityFilter, categoryFilter, selectedAccountIbans]);
 
     useEffect(() => {
         setMobileRenderLimit(MOBILE_RENDER_INITIAL_LIMIT);
-    }, [categoryFilter, mobilePendingOnly, periodFilter, searchText, showTransfersAlways, sortDirection, sortKey, visibilityFilter]);
+    }, [amountMaxText, amountMinText, amountSizeFilter, categoryFilter, mobilePendingOnly, periodFilter, searchText, showTransfersAlways, sortDirection, sortKey, visibilityFilter]);
 
     useEffect(() => {
         if (!isMobileLayout || mobileRenderLimit >= mobileTransactions.length) {
@@ -2445,7 +2475,9 @@ export default function LedgerDashboard({
         if (!embedded || data === null || loading) {
             return;
         }
-        const activeFilters = { periodFilter, periodStart: customPeriodStart, periodEnd: customPeriodEnd, visibilityFilter, categoryFilter, searchText: "", showTransfersAlways, outflowsOnly: initialFilter?.outflowsOnly };
+        const amountMin = amountMinText.trim() === "" ? null : Number(amountMinText);
+        const amountMax = amountMaxText.trim() === "" ? null : Number(amountMaxText);
+        const activeFilters = { periodFilter, periodStart: customPeriodStart, periodEnd: customPeriodEnd, visibilityFilter, categoryFilter, searchText: "", showTransfersAlways, amountSize: amountSizeFilter, amountMin, amountMax, outflowsOnly: initialFilter?.outflowsOnly };
         const matchingIds = displayTransactions.filter((row) => rowMatchesFilters(row, activeFilters)).map((row) => row.rowId);
         setPinnedDrilldownRowIds((current) => {
             if (current === null) {
@@ -2454,7 +2486,7 @@ export default function LedgerDashboard({
             const next = new Set([...current, ...matchingIds]);
             return next.size === current.size ? current : next;
         });
-    }, [categoryFilter, customPeriodEnd, customPeriodStart, data, displayTransactions, embedded, loading, periodFilter, showTransfersAlways, visibilityFilter]);
+    }, [amountMaxText, amountMinText, amountSizeFilter, categoryFilter, customPeriodEnd, customPeriodStart, data, displayTransactions, embedded, loading, periodFilter, showTransfersAlways, visibilityFilter]);
 
     useEffect(() => {
         setSelectedIds((current) => {
@@ -3201,6 +3233,44 @@ export default function LedgerDashboard({
                             <div className="ledger-spiir-search-wrap">
                                 <SearchField value={searchText} resetKey={searchResetKey} onCommit={setSearchText} onClear={resetSearchToLatest} />
                             </div>
+                            <span>størrelse</span>
+                            <select
+                                className="ledger-spiir-filter-select"
+                                aria-label="Filtrer efter beløbsstørrelse"
+                                value={amountSizeFilter}
+                                onChange={(event) => setAmountSizeFilter(event.target.value as AmountSizeFilter)}
+                            >
+                                <option value="all">alle beløb</option>
+                                <option value="under100">under 100 kr</option>
+                                <option value="100to1000">100–999 kr</option>
+                                <option value="1000to10000">1.000–9.999 kr</option>
+                                <option value="over10000">10.000 kr eller mere</option>
+                                <option value="custom">brugerdefineret</option>
+                            </select>
+                            {amountSizeFilter === "custom" ? (
+                                <>
+                                    <input
+                                        className="ledger-spiir-filter-select"
+                                        type="number"
+                                        min="0"
+                                        step="1"
+                                        aria-label="Minimumsbeløb"
+                                        placeholder="min kr"
+                                        value={amountMinText}
+                                        onChange={(event) => setAmountMinText(event.target.value)}
+                                    />
+                                    <input
+                                        className="ledger-spiir-filter-select"
+                                        type="number"
+                                        min="0"
+                                        step="1"
+                                        aria-label="Maksimumsbeløb"
+                                        placeholder="maks kr"
+                                        value={amountMaxText}
+                                        onChange={(event) => setAmountMaxText(event.target.value)}
+                                    />
+                                </>
+                            ) : null}
                             <div className="ledger-spiir-filter-actions">
                                 {saving ? (
                                     <span className="ledger-save-indicator" aria-live="polite">
@@ -3213,7 +3283,7 @@ export default function LedgerDashboard({
                                     onClick={() => void handleBuildSpiir()}
                                     disabled={retrieving || retrieveChecking || saving || buildingSpiir || !spiirNeedsRebuild}
                                 >
-                                    {buildingSpiir ? "Bygger..." : "Byg Spiir"}
+                                    {buildingSpiir ? "Saving..." : "Save"}
                                 </button>
                                 <button
                                     type="button"
@@ -3236,13 +3306,16 @@ export default function LedgerDashboard({
                                     setPeriodFilter("all");
                                     setCustomPeriodStart("");
                                     setCustomPeriodEnd("");
+                                    setAmountSizeFilter("all");
+                                    setAmountMinText("");
+                                    setAmountMaxText("");
                                     setSelectedAccountIbans(accounts.map(accountIban));
                                     setSortKey("booking_date");
                                     setSortDirection("desc");
                                     resetSearchToLatest();
                                     setPage(1);
                                 }}
-                                disabled={visibilityFilter === "all" && !categoryFilter && periodFilter === "all" && !searchText && allAccountsSelected && sortKey === "booking_date" && sortDirection === "desc"}
+                                disabled={visibilityFilter === "all" && !categoryFilter && periodFilter === "all" && amountSizeFilter === "all" && !amountMinText && !amountMaxText && !searchText && allAccountsSelected && sortKey === "booking_date" && sortDirection === "desc"}
                             >
                                 Nulstil filtre
                             </button>

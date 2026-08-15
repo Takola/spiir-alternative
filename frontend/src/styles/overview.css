@@ -550,3 +550,17 @@ html[data-density="compact"] .spiir-expand-toggle {
     font-size: 1.05rem;
 }
 
+.spiir-help-cursor {
+    cursor: help;
+    text-decoration: underline dotted;
+    text-underline-offset: 4px;
+}
+
+.spiir-table-footnote {
+    font-size: 11px;
+    color: var(--text-muted);
+    padding: 8px 12px 0;
+    text-align: right;
+    font-style: italic;
+}
+
